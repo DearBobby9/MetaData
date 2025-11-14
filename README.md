@@ -1,6 +1,12 @@
-# acm-meta-mvp (v0.2)
+# acm-meta-mvp (v0.2.1)
 
 Metadata-first pipeline for ACM Digital Library PDFs. The project extracts spreadsheet-ready metadata (Title, Venue, Year, Authors, Abstract, DOI) so the teacher’s sheet can be filled with minimal manual work. Representative figures and video links remain placeholders for now.
+
+## Version 0.2.1 – Release Notes
+
+- Backfilled IDs for legacy table rows so the Delete button works on all entries (older rows previously lacked identifiers).
+- Allowed slash-containing IDs when calling `DELETE /api/records/{id}`, which fixes deletes for DOIs that include `/`.
+- Known issue: the Atlas browser sometimes swallows the confirm dialog so Delete appears unresponsive—Chrome behaves correctly, so use Chrome if you need to delete rows until Atlas addresses the dialog bug.
 
 ## Version 0.2 – Release Notes
 
