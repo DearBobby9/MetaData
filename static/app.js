@@ -15,6 +15,7 @@ const viewSections = document.querySelectorAll('.view-section');
 const recordsBody = document.getElementById('recordsBody');
 const recordCount = document.getElementById('recordCount');
 const refreshRecordsBtn = document.getElementById('refreshRecords');
+const fontSizeControl = document.getElementById('fontSizeControl');
 
 const FIELD_ORDER = [
   { key: 'Title', label: 'Title', icon: '📄' },
@@ -27,20 +28,51 @@ const FIELD_ORDER = [
   { key: 'Video', label: 'Video', icon: '🎞️' },
 ];
 
-const TABLE_COLUMNS = [
+const DATA_COLUMNS = [
   { key: 'Title', label: 'Title' },
   { key: 'Venue', label: 'Venue' },
-  { key: 'Publication year', label: 'Year' },
-  { key: 'Author list', label: 'Authors' },
-  { key: 'Abstract', label: 'Abstract' },
+  { key: 'Publication year', label: 'Year', className: 'year-col' },
+  { key: 'Author list', label: 'Authors', className: 'authors-col' },
+  { key: 'Abstract', label: 'Abstract', className: 'abstract-col' },
   { key: 'Representative figure', label: 'Representative figure' },
-  { key: 'DOI', label: 'DOI' },
+  { key: 'DOI', label: 'DOI', className: 'doi-col' },
   { key: 'Video', label: 'Video' },
 ];
 
 const DEFAULT_STATUS = 'Waiting for PDFs…';
 const MAX_FILES = 20;
 let selectedFiles = [];
+let currentRecords = [];
+let dragSourceId = null;
+const TOTAL_TABLE_COLUMNS = DATA_COLUMNS.length + 2;
+const columnWidths = {
+  Title: '320px',
+  Venue: '220px',
+  'Publication year': '100px',
+  'Author list': '240px',
+  Abstract: '420px',
+  'Representative figure': '160px',
+  DOI: '150px',
+  Video: '140px',
+};
+const rowHeights = {};
+const columnMinWidths = {
+  Title: 220,
+  Venue: 180,
+  'Publication year': 80,
+  'Author list': 200,
+  Abstract: 280,
+  'Representative figure': 140,
+  DOI: 120,
+  Video: 120,
+};
+const MIN_COLUMN_WIDTH = 120;
+const MIN_ROW_HEIGHT = 48;
+const ROW_RESIZE_HANDLE = 16;
+const COLUMN_HANDLE_WIDTH = 18;
+const tableWrapper = document.querySelector('.table-wrapper');
+let isRowResizing = false;
+let rowResizeHover = null;
 
 function setStatus(state, message) {
   statusMessage.textContent = message;
@@ -191,31 +223,47 @@ async function fetchRecords() {
   try {
     const response = await fetch('/api/records');
     const payload = await response.json();
-    renderRecordsTable(Array.isArray(payload.records) ? payload.records : []);
+    currentRecords = Array.isArray(payload.records) ? payload.records : [];
+    renderRecordsTable();
   } catch (error) {
     console.error('Failed to load records', error);
   }
 }
 
-function renderRecordsTable(records) {
-  recordCount.textContent = records.length;
+function renderRecordsTable() {
+  recordCount.textContent = currentRecords.length;
   recordsBody.innerHTML = '';
+  clearRowResizeHover();
+  isRowResizing = false;
+  setRowResizeCursor(false);
 
-  if (!records.length) {
+  if (!currentRecords.length) {
     const row = document.createElement('tr');
     row.className = 'empty-row';
     const cell = document.createElement('td');
-    cell.colSpan = TABLE_COLUMNS.length;
+    cell.colSpan = TOTAL_TABLE_COLUMNS;
     cell.textContent = 'No records yet — upload some PDFs first.';
     row.appendChild(cell);
     recordsBody.appendChild(row);
+    applyColumnWidths();
     return;
   }
 
-  records.forEach((record) => {
+  currentRecords.forEach((record, index) => {
     const tr = document.createElement('tr');
-    TABLE_COLUMNS.forEach((column) => {
+    tr.dataset.id = record.id;
+    tr.draggable = true;
+
+    const handleTd = document.createElement('td');
+    handleTd.dataset.column = 'order';
+    handleTd.className = 'handle-cell';
+    handleTd.textContent = index + 1;
+    tr.appendChild(handleTd);
+
+    DATA_COLUMNS.forEach((column) => {
       const td = document.createElement('td');
+      td.dataset.columnKey = column.key;
+      if (column.className) td.classList.add(column.className);
       if (column.key === 'DOI' && record.source_url) {
         const link = document.createElement('a');
         link.href = record.source_url;
@@ -228,9 +276,159 @@ function renderRecordsTable(records) {
       }
       tr.appendChild(td);
     });
+
+    const actionsTd = document.createElement('td');
+    actionsTd.dataset.column = 'actions';
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'row-btn delete-row';
+    deleteBtn.dataset.id = record.id;
+    deleteBtn.textContent = 'Delete';
+    actionsTd.appendChild(deleteBtn);
+    tr.appendChild(actionsTd);
+
     recordsBody.appendChild(tr);
   });
+  applyColumnWidths();
+  applyRowHeights();
 }
+
+recordsBody.addEventListener('click', async (event) => {
+  const deleteBtn = event.target.closest('.delete-row');
+  if (!deleteBtn) return;
+  const recordId = deleteBtn.dataset.id;
+  if (!recordId) return;
+  if (!confirm('Delete this record?')) return;
+  await deleteRecord(recordId);
+});
+
+function isInRowResizeZone(row, clientY) {
+  const rect = row.getBoundingClientRect();
+  return rect.bottom - clientY <= ROW_RESIZE_HANDLE;
+}
+
+function setRowResizeCursor(active) {
+  if (!tableWrapper) return;
+  if (active) {
+    tableWrapper.classList.add('row-resize-cursor');
+  } else {
+    tableWrapper.classList.remove('row-resize-cursor');
+  }
+}
+
+function clearRowResizeHover() {
+  if (rowResizeHover) {
+    rowResizeHover.classList.remove('row-resize-hover');
+    rowResizeHover = null;
+  }
+  if (!isRowResizing) {
+    setRowResizeCursor(false);
+  }
+}
+
+function handleRowResizeMouseDown(event) {
+  if (isRowResizing) return;
+  const row = event.target.closest('tr[data-id]');
+  if (!row) return;
+  if (!isInRowResizeZone(row, event.clientY)) return;
+  event.preventDefault();
+  const recordId = row.dataset.id;
+  const startY = event.clientY;
+  const startHeight = row.getBoundingClientRect().height;
+  isRowResizing = true;
+  row.classList.add('resizing');
+  setRowResizeCursor(true);
+
+  const onMouseMove = (moveEvent) => {
+    const delta = moveEvent.clientY - startY;
+    const newHeight = Math.max(MIN_ROW_HEIGHT, startHeight + delta);
+    rowHeights[recordId] = `${newHeight}px`;
+    applyRowHeights();
+  };
+
+  const onMouseUp = () => {
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+    row.classList.remove('resizing');
+    isRowResizing = false;
+    clearRowResizeHover();
+    setRowResizeCursor(false);
+  };
+
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+}
+
+recordsBody.addEventListener('mousedown', handleRowResizeMouseDown);
+
+recordsBody.addEventListener('mousemove', (event) => {
+  if (isRowResizing) return;
+  const row = event.target.closest('tr[data-id]');
+  if (!row) {
+    clearRowResizeHover();
+    return;
+  }
+  if (isInRowResizeZone(row, event.clientY)) {
+    if (rowResizeHover && rowResizeHover !== row) {
+      rowResizeHover.classList.remove('row-resize-hover');
+    }
+    rowResizeHover = row;
+    row.classList.add('row-resize-hover');
+    setRowResizeCursor(true);
+  } else if (rowResizeHover === row) {
+    clearRowResizeHover();
+  }
+});
+
+recordsBody.addEventListener('mouseleave', () => {
+  if (isRowResizing) return;
+  clearRowResizeHover();
+});
+
+recordsBody.addEventListener('dragstart', (event) => {
+  const row = event.target.closest('tr[data-id]');
+  if (!row) return;
+  if (isRowResizing) {
+    event.preventDefault();
+    return;
+  }
+  dragSourceId = row.dataset.id;
+  row.classList.add('dragging');
+  event.dataTransfer.effectAllowed = 'move';
+});
+
+recordsBody.addEventListener('dragend', (event) => {
+  const row = event.target.closest('tr[data-id]');
+  if (row) {
+    row.classList.remove('dragging');
+    row.classList.remove('drag-over');
+  }
+  dragSourceId = null;
+});
+
+recordsBody.addEventListener('dragover', (event) => {
+  event.preventDefault();
+  if (isRowResizing) return;
+  const row = event.target.closest('tr[data-id]');
+  if (!row || row.dataset.id === dragSourceId) return;
+  row.classList.add('drag-over');
+});
+
+recordsBody.addEventListener('dragleave', (event) => {
+  const row = event.target.closest('tr[data-id]');
+  if (row) {
+    row.classList.remove('drag-over');
+  }
+});
+
+recordsBody.addEventListener('drop', (event) => {
+  event.preventDefault();
+  if (isRowResizing) return;
+  const row = event.target.closest('tr[data-id]');
+  if (!row || !dragSourceId || row.dataset.id === dragSourceId) return;
+  reorderRecordsLocally(dragSourceId, row.dataset.id);
+  row.classList.remove('drag-over');
+  persistCurrentOrder();
+});
 
 function switchView(targetId) {
   viewSections.forEach((section) => {
@@ -298,6 +496,57 @@ async function handleSubmit(event) {
   }
 }
 
+function reorderRecordsLocally(sourceId, targetId) {
+  const sourceIndex = currentRecords.findIndex((record) => record.id === sourceId);
+  const targetIndex = currentRecords.findIndex((record) => record.id === targetId);
+  if (sourceIndex < 0 || targetIndex < 0) return;
+  const [moved] = currentRecords.splice(sourceIndex, 1);
+  const insertIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+  currentRecords.splice(insertIndex, 0, moved);
+  renderRecordsTable();
+}
+
+async function persistCurrentOrder() {
+  try {
+    await fetch('/api/records/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order: currentRecords.map((record) => record.id) }),
+    });
+  } catch (error) {
+    console.error('Failed to persist order', error);
+  }
+}
+
+async function deleteRecord(recordId) {
+  try {
+    const response = await fetch(`/api/records/${encodeURIComponent(recordId)}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || 'Failed to delete record');
+    }
+    currentRecords = currentRecords.filter((record) => record.id !== recordId);
+    renderRecordsTable();
+  } catch (error) {
+    console.error(error);
+    alert(error.message);
+  }
+}
+
+function setTableFontSize(value) {
+  const numeric = Number(value);
+  const clamped = Math.min(20, Math.max(12, Number.isNaN(numeric) ? 15 : numeric));
+  document.documentElement.style.setProperty('--table-font-size', `${clamped}px`);
+}
+
+function initFontSizeControl() {
+  if (!fontSizeControl) return;
+  setTableFontSize(fontSizeControl.value);
+  fontSizeControl.addEventListener('input', () => setTableFontSize(fontSizeControl.value));
+}
+
 function init() {
   attachDragHandlers();
   uploadForm.addEventListener('submit', handleSubmit);
@@ -315,8 +564,122 @@ function init() {
     refreshRecordsBtn.addEventListener('click', fetchRecords);
   }
 
+  initColumnResizers();
+  initFontSizeControl();
   setStatus('idle', DEFAULT_STATUS);
   fetchRecords();
 }
 
 init();
+function getColumnKeyFromElement(el) {
+  return el?.dataset?.columnKey || el?.dataset?.column;
+}
+
+function getMinColumnWidth(key) {
+  return columnMinWidths[key] || MIN_COLUMN_WIDTH;
+}
+
+function applyColumnWidths() {
+  const headerCells = document.querySelectorAll('th[data-column], th[data-column-key]');
+  headerCells.forEach((th) => {
+    const key = getColumnKeyFromElement(th);
+    if (!key) return;
+    const width = columnWidths[key];
+    if (width) {
+      th.style.width = width;
+      th.style.minWidth = width;
+      th.style.maxWidth = width;
+    }
+  });
+
+  recordsBody.querySelectorAll('td[data-column], td[data-column-key]').forEach((td) => {
+    const key = getColumnKeyFromElement(td);
+    if (!key) return;
+    const width = columnWidths[key];
+    if (width) {
+      td.style.width = width;
+      td.style.minWidth = width;
+      td.style.maxWidth = width;
+    }
+  });
+}
+
+function applyRowHeights() {
+  recordsBody.querySelectorAll('tr[data-id]').forEach((tr) => {
+    const id = tr.dataset.id;
+    const height = rowHeights[id];
+    if (height) {
+      tr.style.height = height;
+    } else {
+      tr.style.height = '';
+    }
+  });
+}
+
+function isWithinColumnHandle(th, clientX) {
+  const rect = th.getBoundingClientRect();
+  return rect.right - clientX <= COLUMN_HANDLE_WIDTH;
+}
+
+function startColumnResize(th, key, startX) {
+  const initialWidth = parseInt(columnWidths[key] || th.offsetWidth, 10);
+  th.classList.add('col-resizing');
+  document.body.style.userSelect = 'none';
+
+  const onMouseMove = (event) => {
+    const delta = event.clientX - startX;
+    const minWidth = getMinColumnWidth(key);
+    const newWidth = Math.max(minWidth, initialWidth + delta);
+    columnWidths[key] = `${newWidth}px`;
+    applyColumnWidths();
+  };
+
+  const onMouseUp = () => {
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+    th.classList.remove('col-resizing');
+    document.body.style.userSelect = '';
+  };
+
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+}
+
+function initColumnResizers() {
+  const headerCells = document.querySelectorAll('th[data-column], th[data-column-key]');
+  headerCells.forEach((th) => {
+    const key = getColumnKeyFromElement(th);
+    if (!key || key === 'order' || key === 'actions') return;
+    let resizer = th.querySelector('.col-resizer');
+    if (!resizer) {
+      resizer = document.createElement('span');
+      resizer.className = 'col-resizer';
+      th.appendChild(resizer);
+    }
+
+    const startResize = (event) => {
+      event.preventDefault();
+      startColumnResize(th, key, event.clientX);
+    };
+
+    resizer.addEventListener('mousedown', startResize);
+    th.addEventListener('mousedown', (event) => {
+      if (event.target.closest('.col-resizer')) return;
+      if (!isWithinColumnHandle(th, event.clientX)) return;
+      startResize(event);
+    });
+    th.addEventListener('mousemove', (event) => {
+      if (isWithinColumnHandle(th, event.clientX)) {
+        th.classList.add('col-resize-hover');
+      } else if (!th.classList.contains('col-resizing')) {
+        th.classList.remove('col-resize-hover');
+      }
+    });
+    th.addEventListener('mouseleave', () => {
+      if (!th.classList.contains('col-resizing')) {
+        th.classList.remove('col-resize-hover');
+      }
+    });
+  });
+  applyColumnWidths();
+}

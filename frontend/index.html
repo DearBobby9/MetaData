@@ -74,27 +74,37 @@
           <p class="muted">Data lives in <code>data/records.json</code> and <code>data/records.csv</code>, so refreshes won’t wipe anything.</p>
         </div>
         <div class="library-actions">
+          <div class="font-control">
+            <label for="fontSizeControl">Font size</label>
+            <input type="range" id="fontSizeControl" min="12" max="20" value="15" />
+          </div>
           <button id="refreshRecords" class="ghost-btn">Refresh data</button>
-          <a id="exportCsv" class="primary-btn outline" href="/api/export" download>Export CSV</a>
+          <div class="export-group">
+            <a class="primary-btn outline" href="/api/export" download>Export CSV</a>
+            <a class="primary-btn outline" href="/api/export/json" download>Export JSON</a>
+            <a class="primary-btn outline" href="/api/export/xlsx" download>Export Excel</a>
+          </div>
         </div>
       </div>
       <div class="table-wrapper">
         <table>
           <thead>
             <tr>
-              <th>Title</th>
-              <th>Venue</th>
-              <th>Year</th>
-              <th>Authors</th>
-              <th>Abstract</th>
-              <th>Representative figure</th>
-              <th>DOI</th>
-              <th>Video</th>
+              <th class="handle-col" data-column="order">Order</th>
+              <th data-column="title" data-column-key="Title">Title</th>
+              <th data-column="venue" data-column-key="Venue">Venue</th>
+              <th class="year-col" data-column="year" data-column-key="Publication year">Year</th>
+              <th class="authors-col" data-column="authors" data-column-key="Author list">Authors</th>
+              <th class="abstract-col" data-column="abstract" data-column-key="Abstract">Abstract</th>
+              <th data-column="figure" data-column-key="Representative figure">Representative figure</th>
+              <th class="doi-col" data-column="doi" data-column-key="DOI">DOI</th>
+              <th data-column="video" data-column-key="Video">Video</th>
+              <th class="actions-col" data-column="actions">Actions</th>
             </tr>
           </thead>
           <tbody id="recordsBody">
             <tr class="empty-row">
-              <td colspan="8">No records yet — upload some PDFs to get started.</td>
+              <td colspan="10">No records yet — upload some PDFs to get started.</td>
             </tr>
           </tbody>
         </table>

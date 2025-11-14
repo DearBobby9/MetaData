@@ -10,11 +10,12 @@ from typing import Dict, List, Optional
 import pandas as pd
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pypdf import PdfReader
 import fitz
+from pydantic import BaseModel
 
 
 load_dotenv()
@@ -34,6 +35,7 @@ DATA_DIR.mkdir(exist_ok=True, parents=True)
 INDEX_HTML = FRONTEND_DIR / "index.html"
 RECORDS_JSON_PATH = DATA_DIR / "records.json"
 RECORDS_CSV_PATH = DATA_DIR / "records.csv"
+RECORDS_XLSX_PATH = DATA_DIR / "records.xlsx"
 CSV_COLUMNS = [
     "Title",
     "Venue",
@@ -48,6 +50,10 @@ MAX_UPLOAD_BATCH = 20
 
 PERSISTED_RECORDS: List[Dict] = []
 RECORDS_LOCK = Lock()
+
+
+class ReorderPayload(BaseModel):
+    order: List[str]
 
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"<>]+\b")
 CROSSREF_API_BASE = "https://api.crossref.org/works"
@@ -72,6 +78,16 @@ def _write_records_to_disk() -> None:
     ]
     df = pd.DataFrame(rows_for_csv, columns=CSV_COLUMNS)
     df.to_csv(RECORDS_CSV_PATH, index=False, encoding="utf-8-sig")
+
+
+def _generate_excel_file() -> Path:
+    rows_for_excel = [
+        {col: record.get(col, "") for col in CSV_COLUMNS}
+        for record in PERSISTED_RECORDS
+    ]
+    df = pd.DataFrame(rows_for_excel, columns=CSV_COLUMNS)
+    df.to_excel(RECORDS_XLSX_PATH, index=False)
+    return RECORDS_XLSX_PATH
 
 
 def _load_records_from_disk() -> None:
@@ -114,6 +130,35 @@ def get_records_snapshot() -> List[Dict]:
 
 
 _load_records_from_disk()
+
+
+def delete_record_by_id(record_id: str) -> bool:
+    with RECORDS_LOCK:
+        for idx, record in enumerate(PERSISTED_RECORDS):
+            if record.get("id") == record_id:
+                del PERSISTED_RECORDS[idx]
+                _write_records_to_disk()
+                return True
+    return False
+
+
+def reorder_records(order: List[str]) -> None:
+    with RECORDS_LOCK:
+        id_to_record = {record.get("id"): record for record in PERSISTED_RECORDS}
+        new_list: List[Dict] = []
+        seen = set()
+        for record_id in order:
+            record = id_to_record.get(record_id)
+            if record and record_id not in seen:
+                new_list.append(record)
+                seen.add(record_id)
+        for record in PERSISTED_RECORDS:
+            record_id = record.get("id")
+            if record_id not in seen:
+                new_list.append(record)
+        PERSISTED_RECORDS.clear()
+        PERSISTED_RECORDS.extend(new_list)
+        _write_records_to_disk()
 
 
 def extract_doi_from_pdf(pdf_path: Path, max_pages: int = 2) -> Optional[str]:
@@ -216,6 +261,30 @@ def extract_abstract_from_pdf(pdf_path: Path, max_pages: int = 2) -> str:
     except Exception:
         return ""
 
+    try:
+        text_buffer: List[str] = []
+        for page_index in range(min(max_pages, len(doc))):
+            page = doc.load_page(page_index)
+            text_buffer.append(page.get_text("text"))
+        raw_text = "\n".join(text_buffer)
+    finally:
+        doc.close()
+
+    normalized = raw_text.replace("\r", "\n")
+    pattern = re.compile(
+        r"(?is)abstract[:\s-]*\n?(.*?)(?:\n\s*(keywords|index terms|ccs concepts|author keywords|introduction|1\.|i\.)|\Z)"
+    )
+    match = pattern.search(normalized)
+    if match:
+        abstract_text = match.group(1).strip()
+        return re.sub(r"\s+", " ", abstract_text)
+
+    # Fallback to block-based approach if pattern fails
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return ""
+
     abstract_chunks: List[str] = []
     target_found = False
     try:
@@ -236,13 +305,10 @@ def extract_abstract_from_pdf(pdf_path: Path, max_pages: int = 2) -> str:
                         target_found = True
                     continue
                 if re.match(r"^(keywords|index terms|ccs concepts|author keywords|introduction|1\.\s)", lowered):
-                    doc.close()
                     return " ".join(abstract_chunks).strip()
                 abstract_chunks.append(text)
+    finally:
         doc.close()
-    except Exception:
-        doc.close()
-        return ""
     return " ".join(abstract_chunks).strip()
 
 
@@ -367,6 +433,21 @@ def list_records():
     return {"records": records}
 
 
+@app.delete("/api/records/{record_id}")
+def delete_record(record_id: str):
+    if delete_record_by_id(record_id):
+        return {"status": "ok"}
+    raise HTTPException(status_code=404, detail="Record not found")
+
+
+@app.post("/api/records/reorder")
+def reorder_records_endpoint(payload: ReorderPayload):
+    if not payload.order:
+        raise HTTPException(status_code=400, detail="Order list required")
+    reorder_records(payload.order)
+    return {"status": "ok"}
+
+
 @app.get("/api/export")
 def export_records():
     """Download the persisted metadata CSV."""
@@ -374,6 +455,22 @@ def export_records():
     if not RECORDS_CSV_PATH.exists():
         _write_records_to_disk()
     return FileResponse(RECORDS_CSV_PATH, filename="metadata_records.csv")
+
+
+@app.get("/api/export/json")
+def export_records_json():
+    if not RECORDS_JSON_PATH.exists():
+        _write_records_to_disk()
+    return FileResponse(RECORDS_JSON_PATH, filename="metadata_records.json")
+
+
+@app.get("/api/export/xlsx")
+def export_records_xlsx():
+    with RECORDS_LOCK:
+        if not PERSISTED_RECORDS:
+            _write_records_to_disk()
+        path = _generate_excel_file()
+    return FileResponse(path, filename="metadata_records.xlsx")
 
 
 def main():

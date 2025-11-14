@@ -7,4 +7,5 @@ output/
 pdfs/
 data/*.json
 data/*.csv
+data/*.xlsx
 *.log

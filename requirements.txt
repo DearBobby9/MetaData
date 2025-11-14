@@ -6,3 +6,4 @@ pandas
 python-dotenv
 python-multipart
 pymupdf
+openpyxl

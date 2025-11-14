@@ -10,6 +10,7 @@
   --success: #34d399;
   --warning: #facc15;
   --error: #f87171;
+  --table-font-size: 0.95rem;
 }
 
 *,
@@ -38,9 +39,9 @@ body {
 .page {
   position: relative;
   z-index: 1;
-  width: min(1100px, 90vw);
+  width: min(1800px, 98vw);
   margin: 0 auto;
-  padding: 5rem 0 4rem;
+  padding: 4rem 0 4rem;
 }
 
 .hero {
@@ -361,6 +362,33 @@ code {
   flex-wrap: wrap;
 }
 
+.export-group {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.font-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.4rem 0.8rem;
+}
+
+.font-control label {
+  font-size: 0.8rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.font-control input[type="range"] {
+  width: 120px;
+}
+
 .ghost-btn {
   border: 1px solid rgba(148, 163, 184, 0.4);
   background: transparent;
@@ -380,29 +408,68 @@ code {
   width: 100%;
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 18px;
-  background: rgba(2, 6, 23, 0.4);
+  border-radius: 24px;
+  background: rgba(2, 6, 23, 0.5);
+  padding: 1rem;
+  box-shadow: 0 25px 60px rgba(2, 6, 23, 0.55);
 }
 
 table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   color: var(--text);
-  font-size: 0.9rem;
+  font-size: var(--table-font-size);
+}
+
+tbody tr {
+  position: relative;
+}
+
+.handle-col {
+  width: 80px;
+}
+
+.abstract-col {
+  width: 32%;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.authors-col {
+  width: 18%;
+  word-break: break-word;
+}
+
+.actions-col {
+  width: 110px;
+}
+
+.doi-col {
+  width: 12%;
+}
+
+.year-col {
+  width: 8%;
 }
 
 th,
 td {
   padding: 0.85rem 1rem;
   border-bottom: 1px solid rgba(148, 163, 184, 0.1);
-  text-align: left;
+  position: relative;
 }
 
 th {
+  text-align: center;
   font-size: 0.75rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted);
+}
+
+td {
+  text-align: left;
 }
 
 tbody tr:hover {
@@ -412,6 +479,106 @@ tbody tr:hover {
 .empty-row td {
   text-align: center;
   color: var(--muted);
+}
+
+.handle-cell {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  letter-spacing: 0.1em;
+  cursor: grab;
+  color: var(--muted);
+  text-align: center;
+  font-weight: 600;
+}
+
+.row-btn {
+  border: 1px solid rgba(248, 113, 113, 0.6);
+  background: transparent;
+  color: #fecaca;
+  padding: 0.4rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: -6px;
+  width: 16px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.2;
+}
+
+.col-resizer::after {
+  content: '';
+  width: 2px;
+  height: 60%;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.8);
+}
+
+th.col-resize-hover,
+th.col-resize-hover *,
+th.col-resizing,
+th.col-resizing * {
+  cursor: col-resize;
+}
+
+th.col-resize-hover .col-resizer,
+th.col-resizing .col-resizer {
+  opacity: 0.9;
+}
+
+th.col-resize-hover .col-resizer::after,
+th.col-resizing .col-resizer::after {
+  background: var(--accent);
+}
+
+tbody tr::after {
+  content: '';
+  position: absolute;
+  left: 0.75rem;
+  right: 0.75rem;
+  bottom: -3px;
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 0.2s ease, background 0.2s ease;
+  pointer-events: none;
+}
+
+tbody tr.row-resize-hover::after,
+tbody tr.resizing::after {
+  background: rgba(56, 189, 248, 0.6);
+  opacity: 1;
+}
+
+.table-wrapper.row-resize-cursor,
+.table-wrapper.row-resize-cursor * {
+  cursor: row-resize !important;
+}
+
+tr.dragging {
+  opacity: 0.6;
+}
+
+tr.drag-over {
+  outline: 1px dashed var(--accent);
+}
+
+tr.resizing {
+  opacity: 0.8;
+}
+
+tbody tr[data-id] {
+  position: relative;
 }
 
 @media (max-width: 900px) {
