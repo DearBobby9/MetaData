@@ -128,6 +128,11 @@ def _load_records_from_disk() -> None:
             PERSISTED_RECORDS.clear()
     else:
         PERSISTED_RECORDS.clear()
+    for record in PERSISTED_RECORDS:
+        if record.get("id"):
+            continue
+        file_name = record.get("file_name") or record.get("Title") or "record"
+        record["id"] = _record_identifier(record, str(file_name))
     _write_records_to_disk()
 
 
@@ -544,7 +549,7 @@ def list_records():
     return {"records": records}
 
 
-@app.delete("/api/records/{record_id}")
+@app.delete("/api/records/{record_id:path}")
 def delete_record(record_id: str):
     if delete_record_by_id(record_id):
         return {"status": "ok"}
@@ -606,4 +611,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
