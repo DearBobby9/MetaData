@@ -1,8 +1,11 @@
 import argparse
 import json
+import logging
 import os
 import re
+import time
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from threading import Lock
 from typing import Dict, List, Optional
@@ -11,7 +14,7 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pypdf import PdfReader
 import fitz
@@ -19,6 +22,30 @@ from pydantic import BaseModel
 
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+logger = logging.getLogger("acm_meta")
+
+
+class MetaErrorCode(str, Enum):
+    DOI_NOT_FOUND = "DOI_NOT_FOUND"
+    CROSSREF_NOT_FOUND = "CROSSREF_NOT_FOUND"
+    CROSSREF_RATE_LIMIT = "CROSSREF_RATE_LIMIT"
+    CROSSREF_SERVER_ERROR = "CROSSREF_SERVER_ERROR"
+    CROSSREF_REQUEST_FAILED = "CROSSREF_REQUEST_FAILED"
+    PDF_PARSE_FAILED = "PDF_PARSE_FAILED"
+    UNKNOWN_ERROR = "UNKNOWN_ERROR"
+
+
+class MetaError(Exception):
+    def __init__(self, code: MetaErrorCode, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 BASE_DIR = Path(__file__).resolve().parent
 PDF_DIR = BASE_DIR / "pdfs"
@@ -172,16 +199,69 @@ def extract_doi_from_pdf(pdf_path: Path, max_pages: int = 2) -> Optional[str]:
     return match.group(0) if match else None
 
 
-def fetch_crossref_metadata(doi: str) -> Dict:
-    """Fetch metadata payload from Crossref REST API."""
+def fetch_crossref_metadata(doi: str, retries: int = 2, backoff: float = 1.5) -> Dict:
+    """Fetch metadata payload from Crossref REST API with retry semantics."""
 
     url = f"{CROSSREF_API_BASE}/{doi}"
     headers = {
-        "User-Agent": f"acm-meta-mvp/1.0 (mailto:{os.getenv('CROSSREF_MAILTO', 'nobody@example.com')})"
+        "User-Agent": f"acm-meta-mvp/1.1 (mailto:{os.getenv('CROSSREF_MAILTO', 'nobody@example.com')})"
     }
-    resp = requests.get(url, headers=headers, timeout=15)
-    resp.raise_for_status()
-    return resp.json().get("message", {})
+    for attempt in range(retries + 1):
+        try:
+            resp = requests.get(url, headers=headers, timeout=15)
+        except requests.RequestException as exc:  # network errors
+            logger.warning("Crossref request failed (attempt %s/%s): %s", attempt + 1, retries + 1, exc)
+            if attempt == retries:
+                raise MetaError(
+                    MetaErrorCode.CROSSREF_REQUEST_FAILED,
+                    f"Crossref request failed for DOI {doi}: {exc}",
+                ) from exc
+            time.sleep(backoff ** attempt)
+            continue
+
+        if resp.status_code == 404:
+            raise MetaError(
+                MetaErrorCode.CROSSREF_NOT_FOUND,
+                f"Crossref could not find DOI {doi}",
+            )
+        if resp.status_code == 429:
+            logger.warning("Crossref rate limit encountered for DOI %s (attempt %s)", doi, attempt + 1)
+            if attempt == retries:
+                raise MetaError(
+                    MetaErrorCode.CROSSREF_RATE_LIMIT,
+                    "Crossref rate limit reached. Try again shortly.",
+                )
+            time.sleep(backoff ** (attempt + 1))
+            continue
+        if 500 <= resp.status_code < 600:
+            logger.warning(
+                "Crossref server error %s for DOI %s (attempt %s)",
+                resp.status_code,
+                doi,
+                attempt + 1,
+            )
+            if attempt == retries:
+                raise MetaError(
+                    MetaErrorCode.CROSSREF_SERVER_ERROR,
+                    f"Crossref temporary error ({resp.status_code}) for DOI {doi}",
+                )
+            time.sleep(backoff ** (attempt + 1))
+            continue
+
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            raise MetaError(
+                MetaErrorCode.CROSSREF_REQUEST_FAILED,
+                f"Crossref request error ({resp.status_code}) for DOI {doi}",
+            ) from exc
+
+        return resp.json().get("message", {})
+
+    raise MetaError(
+        MetaErrorCode.CROSSREF_REQUEST_FAILED,
+        f"Crossref request failed for DOI {doi}",
+    )
 
 
 def strip_tags(text: str) -> str:
@@ -258,7 +338,8 @@ def persist_result_bundle(result: Dict) -> Dict:
 def extract_abstract_from_pdf(pdf_path: Path, max_pages: int = 2) -> str:
     try:
         doc = fitz.open(pdf_path)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to open PDF %s for abstract extraction: %s", pdf_path.name, exc)
         return ""
 
     try:
@@ -282,7 +363,8 @@ def extract_abstract_from_pdf(pdf_path: Path, max_pages: int = 2) -> str:
     # Fallback to block-based approach if pattern fails
     try:
         doc = fitz.open(pdf_path)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to reopen PDF %s for block parsing: %s", pdf_path.name, exc)
         return ""
 
     abstract_chunks: List[str] = []
@@ -317,7 +399,10 @@ def process_single_pdf(pdf_path: Path) -> Dict:
 
     doi = extract_doi_from_pdf(pdf_path)
     if not doi:
-        raise ValueError(f"DOI not found in {pdf_path.name}")
+        raise MetaError(
+            MetaErrorCode.DOI_NOT_FOUND,
+            f"DOI not found in {pdf_path.name}",
+        )
 
     metadata = fetch_crossref_metadata(doi)
     return normalize_metadata(metadata, pdf_path.name, doi, pdf_path=pdf_path)
@@ -328,14 +413,16 @@ def batch_process(pdf_dir: Path = PDF_DIR) -> List[Dict]:
 
     results: List[Dict] = []
     for pdf in sorted(pdf_dir.glob("*.pdf")):
-        print(f"[INFO] Processing: {pdf.name}")
+        logger.info("Processing %s", pdf.name)
         try:
             info = process_single_pdf(pdf)
             persist_result_bundle(info)
             results.append(info)
-            print(f"       ✔ DOI={info['sheet_row']['DOI']}")
-        except Exception as exc:
-            print(f"       ✖ Failed: {exc}")
+            logger.info("Successfully processed DOI=%s", info["sheet_row"].get("DOI", ""))
+        except MetaError as exc:
+            logger.error("Failed to process %s: %s", pdf.name, exc)
+        except Exception as exc:  # pragma: no cover - unexpected failures
+            logger.exception("Unexpected failure while processing %s", pdf.name)
     return results
 
 
@@ -345,7 +432,7 @@ def save_outputs(results: List[Dict]):
     json_data = [item["full"] for item in results]
     json_path = OUT_DIR / "metadata.json"
     json_path.write_text(json.dumps(json_data, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[INFO] JSON written to {json_path}")
+    logger.info("JSON written to %s", json_path)
 
     sheet_rows = [item["sheet_row"] for item in results]
     df = pd.DataFrame(sheet_rows, columns=[
@@ -360,7 +447,7 @@ def save_outputs(results: List[Dict]):
     ])
     csv_path = OUT_DIR / "metadata_for_spreadsheet.csv"
     df.to_csv(csv_path, index=False, encoding="utf-8-sig")
-    print(f"[INFO] CSV written to {csv_path}")
+    logger.info("CSV written to %s", csv_path)
 
 
 async def handle_uploaded_pdf(upload: UploadFile) -> Dict:
@@ -371,6 +458,7 @@ async def handle_uploaded_pdf(upload: UploadFile) -> Dict:
     try:
         result = process_single_pdf(pdf_path)
         stored = persist_result_bundle(result)
+        logger.info("Persisted record %s", stored.get("id"))
         return {
             "status": "ok",
             "file_name": upload.filename,
@@ -380,8 +468,22 @@ async def handle_uploaded_pdf(upload: UploadFile) -> Dict:
                 "source_url": stored.get("source_url", result["full"].get("source_url", "")),
             },
         }
+    except MetaError as exc:
+        logger.warning("Business error while processing %s: %s", upload.filename, exc)
+        return {
+            "status": "error",
+            "file_name": upload.filename,
+            "code": exc.code,
+            "message": exc.message,
+        }
     except Exception as exc:
-        return {"status": "error", "file_name": upload.filename, "error": str(exc)}
+        logger.exception("Unexpected error while processing %s", upload.filename)
+        return {
+            "status": "error",
+            "file_name": upload.filename,
+            "code": MetaErrorCode.UNKNOWN_ERROR,
+            "message": str(exc),
+        }
 
 
 app = FastAPI(title="ACM Meta MVP")
@@ -422,7 +524,16 @@ async def upload_batch(files: List[UploadFile] = File(...)):
 
     success = any(item.get("status") == "ok" for item in responses)
     overall_status = "ok" if success else "error"
-    return JSONResponse({"status": overall_status, "items": responses})
+    body: Dict[str, object] = {"status": overall_status, "items": responses}
+    if not success:
+        first_error = next(
+            (item for item in responses if item.get("status") == "error"),
+            None,
+        )
+        if first_error:
+            body["error"] = first_error.get("message")
+            body["code"] = first_error.get("code")
+    return JSONResponse(body)
 
 
 @app.get("/api/records")
@@ -495,3 +606,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

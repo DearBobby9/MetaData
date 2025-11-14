@@ -41,6 +41,32 @@ const DATA_COLUMNS = [
 
 const DEFAULT_STATUS = 'Waiting for PDFs…';
 const MAX_FILES = 20;
+const ERROR_MESSAGES = {
+  DOI_NOT_FOUND: 'No DOI detected in this PDF. Make sure you are using the official ACM DL version.',
+  CROSSREF_NOT_FOUND: 'Crossref could not find this DOI. It might be very new or unpublished.',
+  CROSSREF_RATE_LIMIT: 'Crossref rate limit reached. Wait a few seconds and try again.',
+  CROSSREF_SERVER_ERROR: 'Crossref returned a temporary server error. Please retry shortly.',
+  CROSSREF_REQUEST_FAILED: 'Could not reach Crossref. Check your connection and try again.',
+  PDF_PARSE_FAILED: 'Failed to read the PDF well enough to extract the abstract.',
+  UNKNOWN_ERROR: 'Unexpected error while processing this PDF.',
+};
+
+async function api(path, options = {}) {
+  const response = await fetch(path, options);
+  const contentType = response.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
+  const data = isJson ? await response.json().catch(() => null) : null;
+  if (!response.ok) {
+    const message = (data && (data.message || data.error || data.detail))
+      || `Request failed with status ${response.status}`;
+    const error = new Error(message);
+    error.payload = data;
+    error.status = response.status;
+    throw error;
+  }
+  return data ?? {};
+}
+
 let selectedFiles = [];
 let currentRecords = [];
 let dragSourceId = null;
@@ -74,9 +100,17 @@ const tableWrapper = document.querySelector('.table-wrapper');
 let isRowResizing = false;
 let rowResizeHover = null;
 
-function setStatus(state, message) {
+function setStatus(state, message, code = '') {
   statusMessage.textContent = message;
   statusMessage.className = `status-chip ${state}`;
+  statusMessage.dataset.state = state;
+  if (code) {
+    statusMessage.dataset.code = code;
+    statusMessage.title = `${code}: ${message}`;
+  } else {
+    delete statusMessage.dataset.code;
+    statusMessage.removeAttribute('title');
+  }
 }
 
 function updateFileNameDisplay() {
@@ -151,9 +185,49 @@ function updatePreview(row, debugInfo) {
 }
 
 function describeError(error) {
+  const fallback = 'Upload failed, please try again later.';
+  if (!error) return fallback;
   if (typeof error === 'string') return error;
-  if (error instanceof Error) return error.message;
-  return 'Upload failed, please try again later.';
+
+  if (error.payload) {
+    const nested = describeError(error.payload);
+    return nested || fallback;
+  }
+
+  if (error.code && ERROR_MESSAGES[error.code]) {
+    return ERROR_MESSAGES[error.code];
+  }
+
+  if (typeof error.message === 'string' && error.message.trim()) {
+    return error.message;
+  }
+
+  if (typeof error.error === 'string' && error.error.trim()) {
+    return error.error;
+  }
+
+  if (typeof error.detail === 'string' && error.detail.trim()) {
+    return error.detail;
+  }
+
+  if (error.detail && typeof error.detail === 'object') {
+    const nested = describeError(error.detail);
+    if (nested) return nested;
+  }
+
+  if (error instanceof Error) {
+    return error.message || fallback;
+  }
+
+  return fallback;
+}
+
+function getErrorCode(error) {
+  if (!error || typeof error === 'string') return '';
+  if (typeof error.code === 'string' && error.code) return error.code;
+  if (error.payload) return getErrorCode(error.payload);
+  if (error.detail && typeof error.detail === 'object') return getErrorCode(error.detail);
+  return '';
 }
 
 function setSelectedFiles(filesArray) {
@@ -213,7 +287,19 @@ function renderUploadLog(items) {
     const name = document.createElement('span');
     name.textContent = item.file_name || item?.data?.file_name || item?.data?.Title || 'Unknown file';
     const state = document.createElement('span');
-    state.textContent = item.status === 'ok' ? 'Success' : (item.error || 'Failed');
+    if (item.status === 'ok') {
+      state.textContent = 'Success';
+      delete state.dataset.code;
+      state.removeAttribute('title');
+    } else {
+      const message = describeError(item);
+      const code = getErrorCode(item);
+      state.textContent = message;
+      if (code) {
+        state.dataset.code = code;
+        state.title = code;
+      }
+    }
     li.append(name, state);
     uploadLog.appendChild(li);
   });
@@ -221,12 +307,12 @@ function renderUploadLog(items) {
 
 async function fetchRecords() {
   try {
-    const response = await fetch('/api/records');
-    const payload = await response.json();
+    const payload = await api('/api/records');
     currentRecords = Array.isArray(payload.records) ? payload.records : [];
     renderRecordsTable();
   } catch (error) {
     console.error('Failed to load records', error);
+    setStatus('warning', describeError(error), getErrorCode(error));
   }
 }
 
@@ -463,16 +549,10 @@ async function handleSubmit(event) {
   selectedFiles.forEach((file) => formData.append('files', file));
 
   try {
-    const response = await fetch('/api/upload/batch', {
+    const payload = await api('/api/upload/batch', {
       method: 'POST',
       body: formData,
     });
-    const payload = await response.json();
-
-    if (!response.ok) {
-      throw new Error(payload.error || 'Server returned an error');
-    }
-
     const items = Array.isArray(payload.items) ? payload.items : [];
     const successItems = items.filter((item) => item.status === 'ok');
     renderUploadLog(items);
@@ -481,18 +561,31 @@ async function handleSubmit(event) {
       renderMetadata(successItems[0].data);
       updatePreview(successItems[0].data, successItems[0].debug);
       const failed = items.length - successItems.length;
-      const suffix = failed > 0 ? `, ${failed} failed` : '';
-      setStatus('success', `Processed ${successItems.length}/${items.length}${suffix}`);
+      if (failed > 0) {
+        const failedItem = items.find((item) => item.status !== 'ok');
+        const failureMessage = failedItem ? describeError(failedItem) : `${failed} failed`;
+        const failureCode = failedItem ? getErrorCode(failedItem) : '';
+        setStatus(
+          'warning',
+          `Processed ${successItems.length}/${items.length} — ${failed} failed (${failureMessage})`,
+          failureCode,
+        );
+      } else {
+        setStatus('success', `Processed ${successItems.length}/${items.length}`);
+      }
     } else {
       resetResults();
-      setStatus('error', payload.error || 'Every file failed — please verify your PDFs.');
+      const message = payload.error || describeError(payload) || 'Every file failed — please verify your PDFs.';
+      const code = payload.code || getErrorCode(payload);
+      setStatus('error', message, code);
     }
 
     setSelectedFiles([]);
     pdfInput.value = '';
     await fetchRecords();
   } catch (error) {
-    setStatus('error', describeError(error));
+    console.error('Upload failed', error);
+    setStatus('error', describeError(error), getErrorCode(error));
   }
 }
 
@@ -508,30 +601,29 @@ function reorderRecordsLocally(sourceId, targetId) {
 
 async function persistCurrentOrder() {
   try {
-    await fetch('/api/records/reorder', {
+    await api('/api/records/reorder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ order: currentRecords.map((record) => record.id) }),
     });
   } catch (error) {
     console.error('Failed to persist order', error);
+    setStatus('warning', describeError(error), getErrorCode(error));
   }
 }
 
 async function deleteRecord(recordId) {
   try {
-    const response = await fetch(`/api/records/${encodeURIComponent(recordId)}`, {
+    await api(`/api/records/${encodeURIComponent(recordId)}`, {
       method: 'DELETE',
     });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.detail || 'Failed to delete record');
-    }
     currentRecords = currentRecords.filter((record) => record.id !== recordId);
     renderRecordsTable();
+    setStatus('success', 'Record deleted from library.');
   } catch (error) {
     console.error(error);
-    alert(error.message);
+    alert(describeError(error));
+    setStatus('error', describeError(error), getErrorCode(error));
   }
 }
 
