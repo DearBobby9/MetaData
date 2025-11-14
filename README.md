@@ -39,7 +39,6 @@ Metadata-first pipeline for ACM Digital Library PDFs. The MVP prioritizes automa
 
 ### 2.2 V1（下一步）
 
-- 当 Crossref 缺摘要时，回退到 PDF 内文搜索 “Abstract” 段。
 - CLI/前端工具帮助人工挑选 representative figure、填写视频链接。
 - 辅助脚本导出 PDF 内所有图片。
 
@@ -101,6 +100,7 @@ requests
 pandas
 python-dotenv
 python-multipart
+pymupdf
 ```
 
 `config.example.env`
@@ -122,7 +122,7 @@ CROSSREF_MAILTO=your_email@example.com
    - Venue：`container-title[0]`；
    - Publication year：`issued.date-parts[0][0]`；
    - Author list：`given family` 拼接后用 `, ` 连接；
-   - Abstract：去除 HTML 标签；
+   - Abstract：优先使用 Crossref，如缺失则借助 PyMuPDF 从 PDF“Abstract”段落自动截取；
    - DOI：Crossref 返回或 PDF fallback。
 4. **输出**：
    - `metadata.json`：`[{ file_name, title, venue, year, authors[], abstract, doi, source_url, raw_crossref }]`。
@@ -325,7 +325,7 @@ if __name__ == "__main__":
 
 #### 持久化 & 批量 API
 
-- `POST /api/upload/batch`：一次上传最多 20 个 `files`，返回每个文件的处理状态；成功的条目会写入 `data/records.json` & `data/records.csv`。
+- `POST /api/upload/batch`：一次上传最多 20 个 `files`，返回每个文件的处理状态；成功的条目会写入 `data/records.json` & `data/records.csv`，其中 Abstract 若缺失会自动从 PDF 抽取。
 - `GET /api/records`：返回当前已保存的所有 metadata 行，新数据按时间倒序排列，可用于前端表格或自定义脚本。
 - `GET /api/export`：直接下载 `data/records.csv`，列顺序与老师 Spreadsheet 完全一致。
 - `data/` 目录保存的 JSON/CSV 在刷新或重启后不会丢失，可作为长期语料库。若想清空，只需删除对应文件即可。
@@ -381,7 +381,7 @@ if __name__ == "__main__":
 ## 4. 状态速览
 
 - ✅ 自动 metadata：DOI 提取 + Crossref + CSV/JSON 输出。
-- ⏳ 待办（V1）：PDF 摘要回退、图像导出、视频/图人工填表工具。
+- ⏳ 待办（V1）：图像导出、视频/图人工填表工具。
 - 🔭 V2：自动图像/视频推荐、making prompt 生成、XR 浏览等。
 
 此 README 即项目文档，可直接跟老师作业对齐，也为后续扩展提供路线。

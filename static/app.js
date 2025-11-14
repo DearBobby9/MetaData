@@ -38,7 +38,7 @@ const TABLE_COLUMNS = [
   { key: 'Video', label: 'Video' },
 ];
 
-const DEFAULT_STATUS = '等待上传 PDF…';
+const DEFAULT_STATUS = 'Waiting for PDFs…';
 const MAX_FILES = 20;
 let selectedFiles = [];
 
@@ -49,7 +49,7 @@ function setStatus(state, message) {
 
 function updateFileNameDisplay() {
   if (!selectedFiles.length) {
-    fileName.textContent = '尚未选择文件';
+    fileName.textContent = 'No files selected yet';
     return;
   }
 
@@ -58,7 +58,7 @@ function updateFileNameDisplay() {
     return;
   }
 
-  fileName.textContent = `${selectedFiles[0].name} 等 ${selectedFiles.length} 个文件`;
+  fileName.textContent = `${selectedFiles[0].name} + ${selectedFiles.length - 1} more`;
 }
 
 function resetResults() {
@@ -97,8 +97,8 @@ function renderMetadata(row) {
 
 function updatePreview(row, debugInfo) {
   if (!row) {
-    previewTitle.textContent = '暂无论文';
-    previewAuthors.textContent = '上传后会展示作者列表。';
+    previewTitle.textContent = 'No paper yet';
+    previewAuthors.textContent = 'Authors will appear after the first upload.';
     previewVenue.textContent = '';
     previewLink.hidden = true;
     return;
@@ -121,7 +121,7 @@ function updatePreview(row, debugInfo) {
 function describeError(error) {
   if (typeof error === 'string') return error;
   if (error instanceof Error) return error.message;
-  return '上传失败，请稍后再试。';
+  return 'Upload failed, please try again later.';
 }
 
 function setSelectedFiles(filesArray) {
@@ -137,7 +137,7 @@ function handleFileSelection(fileList) {
   }
 
   if (arr.length > MAX_FILES) {
-    setStatus('warning', `一次最多上传 ${MAX_FILES} 个文件，已自动截断。`);
+    setStatus('warning', `You can upload up to ${MAX_FILES} files at once (extras were ignored).`);
   }
   setSelectedFiles(arr.slice(0, MAX_FILES));
 }
@@ -179,9 +179,9 @@ function renderUploadLog(items) {
     const li = document.createElement('li');
     li.className = item.status === 'ok' ? 'ok' : 'error';
     const name = document.createElement('span');
-    name.textContent = item.file_name || item?.data?.file_name || item?.data?.Title || '未知文件';
+    name.textContent = item.file_name || item?.data?.file_name || item?.data?.Title || 'Unknown file';
     const state = document.createElement('span');
-    state.textContent = item.status === 'ok' ? '成功' : (item.error || '失败');
+    state.textContent = item.status === 'ok' ? 'Success' : (item.error || 'Failed');
     li.append(name, state);
     uploadLog.appendChild(li);
   });
@@ -206,7 +206,7 @@ function renderRecordsTable(records) {
     row.className = 'empty-row';
     const cell = document.createElement('td');
     cell.colSpan = TABLE_COLUMNS.length;
-    cell.textContent = '暂无数据，先去上传一些 PDF 吧。';
+    cell.textContent = 'No records yet — upload some PDFs first.';
     row.appendChild(cell);
     recordsBody.appendChild(row);
     return;
@@ -253,11 +253,11 @@ function switchView(targetId) {
 async function handleSubmit(event) {
   event.preventDefault();
   if (!selectedFiles.length) {
-    setStatus('warning', '请先选择至少一个 PDF。');
+    setStatus('warning', 'Pick at least one PDF first.');
     return;
   }
 
-  setStatus('pending', `上传中（${selectedFiles.length} 个文件）…`);
+  setStatus('pending', `Uploading ${selectedFiles.length} file(s)…`);
   resetResults();
   renderUploadLog([]);
 
@@ -272,7 +272,7 @@ async function handleSubmit(event) {
     const payload = await response.json();
 
     if (!response.ok) {
-      throw new Error(payload.error || '服务器返回错误');
+      throw new Error(payload.error || 'Server returned an error');
     }
 
     const items = Array.isArray(payload.items) ? payload.items : [];
@@ -283,11 +283,11 @@ async function handleSubmit(event) {
       renderMetadata(successItems[0].data);
       updatePreview(successItems[0].data, successItems[0].debug);
       const failed = items.length - successItems.length;
-      const suffix = failed > 0 ? `，${failed} 篇失败` : '';
-      setStatus('success', `成功处理 ${successItems.length}/${items.length} 篇${suffix}`);
+      const suffix = failed > 0 ? `, ${failed} failed` : '';
+      setStatus('success', `Processed ${successItems.length}/${items.length}${suffix}`);
     } else {
       resetResults();
-      setStatus('error', payload.error || '所有文件均处理失败，请检查 PDF。');
+      setStatus('error', payload.error || 'Every file failed — please verify your PDFs.');
     }
 
     setSelectedFiles([]);

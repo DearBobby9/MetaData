@@ -17,10 +17,10 @@
     <header class="hero">
       <p class="eyebrow">Metadata-first MVP</p>
       <h1>ACM Metadata Extractor</h1>
-      <p class="lead">一次性上传最多 20 篇 ACM DL PDF，自动提取 Title / Venue / Year / Authors / Abstract / DOI，并永久保存在本地 data/ 目录。</p>
+      <p class="lead">Upload up to 20 ACM DL PDFs in one go, auto-extract Title / Venue / Year / Authors / Abstract / DOI, and keep everything safely in the local <code>data/</code> folder.</p>
       <div class="nav-tabs">
-        <button class="nav-btn active" data-view-target="uploadView">上传 PDF</button>
-        <button class="nav-btn" data-view-target="libraryView">Metadata 表格</button>
+        <button class="nav-btn active" data-view-target="uploadView">Upload PDFs</button>
+        <button class="nav-btn" data-view-target="libraryView">Metadata Table</button>
       </div>
     </header>
 
@@ -32,25 +32,25 @@
               <input type="file" id="pdfInput" accept="application/pdf" multiple hidden />
               <div class="drop-content">
                 <div class="icon-circle">⬆️</div>
-                <p class="drop-title">拖拽或点击选择（一次最多 20 篇）</p>
-                <p class="drop-hint">建议使用从 ACM DL 下载的正式 PDF</p>
+                <p class="drop-title">Drag files here or click to pick (max 20)</p>
+                <p class="drop-hint">Best results with official ACM DL PDFs</p>
               </div>
             </label>
             <div class="form-actions">
-              <span id="fileName" class="file-name">尚未选择文件</span>
-              <button type="submit" class="primary-btn">批量提取 Metadata</button>
+              <span id="fileName" class="file-name">No files selected yet</span>
+              <button type="submit" class="primary-btn">Extract Metadata</button>
             </div>
           </form>
-          <div id="statusMessage" class="status-chip idle">等待上传 PDF…</div>
+          <div id="statusMessage" class="status-chip idle">Waiting for PDFs…</div>
           <ul id="uploadLog" class="upload-log"></ul>
         </div>
 
         <div class="preview-card">
-          <p class="eyebrow">最新成功的论文</p>
-          <h2 id="previewTitle">暂无论文</h2>
-          <p id="previewAuthors" class="muted">上传后会展示作者列表。</p>
+          <p class="eyebrow">Latest success</p>
+          <h2 id="previewTitle">No paper yet</h2>
+          <p id="previewAuthors" class="muted">Authors will appear after the first upload.</p>
           <p id="previewVenue" class="muted"></p>
-          <a id="previewLink" class="link" href="#" target="_blank" rel="noreferrer" hidden>查看 DOI 记录 ↗</a>
+          <a id="previewLink" class="link" href="#" target="_blank" rel="noreferrer" hidden>Open DOI record ↗</a>
         </div>
       </section>
 
@@ -69,13 +69,13 @@
     <section id="libraryView" class="view-section hidden" data-view="library">
       <div class="library-header">
         <div>
-          <p class="eyebrow">持久化 Metadata</p>
-          <h2><span id="recordCount">0</span> 篇论文</h2>
-          <p class="muted">数据存储于 <code>data/records.json</code> 与 <code>data/records.csv</code>，刷新不会丢失。</p>
+          <p class="eyebrow">Persistent metadata</p>
+          <h2><span id="recordCount">0</span> papers</h2>
+          <p class="muted">Data lives in <code>data/records.json</code> and <code>data/records.csv</code>, so refreshes won’t wipe anything.</p>
         </div>
         <div class="library-actions">
-          <button id="refreshRecords" class="ghost-btn">刷新数据</button>
-          <a id="exportCsv" class="primary-btn outline" href="/api/export" download>导出 CSV</a>
+          <button id="refreshRecords" class="ghost-btn">Refresh data</button>
+          <a id="exportCsv" class="primary-btn outline" href="/api/export" download>Export CSV</a>
         </div>
       </div>
       <div class="table-wrapper">
@@ -94,7 +94,7 @@
           </thead>
           <tbody id="recordsBody">
             <tr class="empty-row">
-              <td colspan="8">暂无数据，先去上传一些 PDF 吧。</td>
+              <td colspan="8">No records yet — upload some PDFs to get started.</td>
             </tr>
           </tbody>
         </table>

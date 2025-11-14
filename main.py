@@ -14,6 +14,7 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pypdf import PdfReader
+import fitz
 
 
 load_dotenv()
@@ -144,7 +145,12 @@ def strip_tags(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text).strip()
 
 
-def normalize_metadata(message: Dict, file_name: str, doi_fallback: Optional[str]) -> Dict:
+def normalize_metadata(
+    message: Dict,
+    file_name: str,
+    doi_fallback: Optional[str],
+    pdf_path: Optional[Path] = None,
+) -> Dict:
     """Map Crossref message to sheet row + full payload."""
 
     title_list = message.get("title") or []
@@ -169,6 +175,8 @@ def normalize_metadata(message: Dict, file_name: str, doi_fallback: Optional[str
 
     abstract_raw = message.get("abstract")
     abstract = strip_tags(abstract_raw) if isinstance(abstract_raw, str) else ""
+    if not abstract and pdf_path is not None and pdf_path.exists():
+        abstract = extract_abstract_from_pdf(pdf_path)
 
     sheet_row = {
         "Title": title,
@@ -202,6 +210,42 @@ def persist_result_bundle(result: Dict) -> Dict:
     return persist_sheet_row(row, full.get("file_name", ""), full.get("source_url", ""))
 
 
+def extract_abstract_from_pdf(pdf_path: Path, max_pages: int = 2) -> str:
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return ""
+
+    abstract_chunks: List[str] = []
+    target_found = False
+    try:
+        for page_index in range(min(max_pages, len(doc))):
+            page = doc.load_page(page_index)
+            blocks = page.get_text("blocks")
+            blocks.sort(key=lambda b: (round(b[1], 1), round(b[0], 1)))
+            for block in blocks:
+                text = (block[4] or "").strip()
+                if not text:
+                    continue
+                lowered = text.lower()
+                if not target_found:
+                    if lowered.startswith("abstract"):
+                        cleaned = re.sub(r"^abstract[:\s-]*", "", text, flags=re.IGNORECASE).strip()
+                        if cleaned:
+                            abstract_chunks.append(cleaned)
+                        target_found = True
+                    continue
+                if re.match(r"^(keywords|index terms|ccs concepts|author keywords|introduction|1\.\s)", lowered):
+                    doc.close()
+                    return " ".join(abstract_chunks).strip()
+                abstract_chunks.append(text)
+        doc.close()
+    except Exception:
+        doc.close()
+        return ""
+    return " ".join(abstract_chunks).strip()
+
+
 def process_single_pdf(pdf_path: Path) -> Dict:
     """Run DOI extraction + Crossref fetch for one PDF."""
 
@@ -210,7 +254,7 @@ def process_single_pdf(pdf_path: Path) -> Dict:
         raise ValueError(f"DOI not found in {pdf_path.name}")
 
     metadata = fetch_crossref_metadata(doi)
-    return normalize_metadata(metadata, pdf_path.name, doi)
+    return normalize_metadata(metadata, pdf_path.name, doi, pdf_path=pdf_path)
 
 
 def batch_process(pdf_dir: Path = PDF_DIR) -> List[Dict]:
