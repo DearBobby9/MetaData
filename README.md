@@ -6,8 +6,8 @@ Metadata-first pipeline for ACM Digital Library PDFs. The project extracts sprea
 
 - Backfilled IDs for legacy table rows so the Delete button works on all entries (older rows previously lacked identifiers).
 - Allowed slash-containing IDs when calling `DELETE /api/records/{id}`, which fixes deletes for DOIs that include `/`.
-- Known issue: the Atlas browser sometimes swallows the confirm dialog so Delete appears unresponsive—Chrome behaves correctly, so use Chrome if you need to delete rows until Atlas addresses the dialog bug.
-
+-** Known issue: the Atlas browser sometimes swallows the confirm dialog so Delete appears unresponsive—Chrome behaves correctly, so use Chrome if you need to delete rows until Atlas addresses the dialog bug.
+**
 ## Version 0.2 – Release Notes
 
 - Added mouse-driven resizing for metadata-table columns and rows so reviewers can adjust column widths or row heights directly in the UI.
