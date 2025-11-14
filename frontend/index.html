@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ACM Metadata Extractor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+
+<body>
+  <div class="bg-gradient"></div>
+  <main class="page">
+    <header class="hero">
+      <p class="eyebrow">Metadata-first MVP</p>
+      <h1>ACM Metadata Extractor</h1>
+      <p class="lead">Upload任意 ACM DL PDF，就能即时获取老师 Spreadsheet 需要的 Title / Venue / Year / Authors / Abstract / DOI。</p>
+    </header>
+
+    <section class="panel">
+      <div class="upload-card">
+        <form id="uploadForm" class="upload-form">
+          <label class="dropzone" id="dropzone">
+            <input type="file" id="pdfInput" accept="application/pdf" hidden />
+            <div class="drop-content">
+              <div class="icon-circle">⬆️</div>
+              <p class="drop-title">拖拽 PDF 或点击选择文件</p>
+              <p class="drop-hint">推荐使用从 ACM DL 下载的正式 PDF</p>
+            </div>
+          </label>
+          <div class="form-actions">
+            <span id="fileName" class="file-name">尚未选择文件</span>
+            <button type="submit" class="primary-btn">提取 Metadata</button>
+          </div>
+        </form>
+        <div id="statusMessage" class="status-chip idle">等待上传 PDF…</div>
+      </div>
+
+      <div class="preview-card">
+        <p class="eyebrow">最新上传</p>
+        <h2 id="previewTitle">暂无论文</h2>
+        <p id="previewAuthors" class="muted">上传后会展示作者列表。</p>
+        <p id="previewVenue" class="muted"></p>
+        <a id="previewLink" class="link" href="#" target="_blank" rel="noreferrer" hidden>查看 DOI 记录 ↗</a>
+      </div>
+    </section>
+
+    <section id="resultSection" class="results hidden">
+      <div class="results-header">
+        <div>
+          <p class="eyebrow">Metadata snapshot</p>
+          <h3>Spreadsheet-ready fields</h3>
+        </div>
+        <span class="pill success">Synced with Crossref</span>
+      </div>
+      <div id="metadataGrid" class="meta-grid"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js" defer></script>
+</body>
+
+</html>

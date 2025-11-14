@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+pypdf
+requests
+pandas
+python-dotenv
+python-multipart
