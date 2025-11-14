@@ -1,13 +1,42 @@
-# acm-meta-mvp (v0.2.1)
+# acm-meta-mvp (v0.2.2)
 
 Metadata-first pipeline for ACM Digital Library PDFs. The project extracts spreadsheet-ready metadata (Title, Venue, Year, Authors, Abstract, DOI) so the teacher’s sheet can be filled with minimal manual work. Representative figures and video links remain placeholders for now.
 
-## Version 0.2.1 – Release Notes
+## Version 0.2.2 – Release Notes
 
-- Backfilled IDs for legacy table rows so the Delete button works on all entries (older rows previously lacked identifiers).
-- Allowed slash-containing IDs when calling `DELETE /api/records/{id}`, which fixes deletes for DOIs that include `/`.
--** Known issue: the Atlas browser sometimes swallows the confirm dialog so Delete appears unresponsive—Chrome behaves correctly, so use Chrome if you need to delete rows until Atlas addresses the dialog bug.
-**
+- Refactored the pipeline into reusable core modules (`acm_meta/`) so PDF parsing, Crossref calls, normalization, and persistence can be reused by both CLI and API layers.
+- Introduced typed models plus structured upload responses. Every API now returns consistent `status/error_code/message` payloads, and the frontend consumes a single `record` shape.
+- Hardened persistence with atomic JSON/CSV/XLSX writes and process-level file locks. DELETE/reorder now operate purely on stable record IDs.
+- Known issue: the Atlas browser sometimes swallows the confirm dialog so Delete appears unresponsive—Chrome behaves correctly, so use Chrome if you need to delete rows until Atlas addresses the dialog bug.
+
+## TL;DR (Quick Start)
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp config.example.env .env  # fill in CROSSREF_MAILTO
+mkdir -p pdfs output && cp /path/to/acm.pdf pdfs/
+python main.py serve  # open http://127.0.0.1:8000
+```
+
+Batch mode still works: drop multiple PDFs into `pdfs/` and run `python main.py batch` to regenerate `output/metadata.json` + CSV.
+
+## Sample I/O Snapshot
+
+Uploading `XR-Objects.pdf` produces the following table row (also persisted to `data/records.json` / `.csv`):
+
+```json
+{
+  "Title": "Augmented Object Intelligence with XR-Objects",
+  "Venue": "Proceedings of the 37th Annual ACM Symposium on User Interface Software and Technology",
+  "Publication year": 2024,
+  "Author list": "Mustafa Doga Dogan, Eric J Gonzalez, Karan Ahuja, Ruofei Du, Andrea Colaço, Johnny Lee, Mar Gonzalez-Franco, David Kim",
+  "Abstract": "Seamless integration of physical objects as interactive digital entities remains a challenge for spatial computing...",
+  "Representative figure": "N/A",
+  "DOI": "10.1145/3654777.3676379",
+  "Video": "N/A"
+}
+```
 ## Version 0.2 – Release Notes
 
 - Added mouse-driven resizing for metadata-table columns and rows so reviewers can adjust column widths or row heights directly in the UI.

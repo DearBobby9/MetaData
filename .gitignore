@@ -8,4 +8,5 @@ pdfs/
 data/*.json
 data/*.csv
 data/*.xlsx
+data/*.lock
 *.log

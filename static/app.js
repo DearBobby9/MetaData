@@ -161,7 +161,7 @@ function renderMetadata(row) {
   resultSection.classList.remove('hidden');
 }
 
-function updatePreview(row, debugInfo) {
+function updatePreview(row) {
   if (!row) {
     previewTitle.textContent = 'No paper yet';
     previewAuthors.textContent = 'Authors will appear after the first upload.';
@@ -175,7 +175,7 @@ function updatePreview(row, debugInfo) {
   const venueBits = [row.Venue, row['Publication year']].filter(Boolean);
   previewVenue.textContent = venueBits.join(' · ');
 
-  const doiLink = debugInfo?.source_url;
+  const doiLink = row?.source_url;
   if (doiLink) {
     previewLink.href = doiLink;
     previewLink.hidden = false;
@@ -225,6 +225,7 @@ function describeError(error) {
 function getErrorCode(error) {
   if (!error || typeof error === 'string') return '';
   if (typeof error.code === 'string' && error.code) return error.code;
+  if (typeof error.error_code === 'string' && error.error_code) return error.error_code;
   if (error.payload) return getErrorCode(error.payload);
   if (error.detail && typeof error.detail === 'object') return getErrorCode(error.detail);
   return '';
@@ -285,7 +286,7 @@ function renderUploadLog(items) {
     const li = document.createElement('li');
     li.className = item.status === 'ok' ? 'ok' : 'error';
     const name = document.createElement('span');
-    name.textContent = item.file_name || item?.data?.file_name || item?.data?.Title || 'Unknown file';
+    name.textContent = item.file_name || item?.record?.file_name || item?.record?.Title || 'Unknown file';
     const state = document.createElement('span');
     if (item.status === 'ok') {
       state.textContent = 'Success';
@@ -553,13 +554,14 @@ async function handleSubmit(event) {
       method: 'POST',
       body: formData,
     });
-    const items = Array.isArray(payload.items) ? payload.items : [];
-    const successItems = items.filter((item) => item.status === 'ok');
+    const items = Array.isArray(payload.results) ? payload.results : [];
+    const successItems = items.filter((item) => item.status === 'ok' && item.record);
     renderUploadLog(items);
 
     if (successItems.length) {
-      renderMetadata(successItems[0].data);
-      updatePreview(successItems[0].data, successItems[0].debug);
+      const firstRecord = successItems[0].record;
+      renderMetadata(firstRecord);
+      updatePreview(firstRecord);
       const failed = items.length - successItems.length;
       if (failed > 0) {
         const failedItem = items.find((item) => item.status !== 'ok');
