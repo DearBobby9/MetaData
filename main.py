@@ -2,7 +2,9 @@ import argparse
 import json
 import os
 import re
+from datetime import datetime
 from pathlib import Path
+from threading import Lock
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -21,15 +23,96 @@ PDF_DIR = BASE_DIR / "pdfs"
 OUT_DIR = BASE_DIR / "output"
 STATIC_DIR = BASE_DIR / "static"
 FRONTEND_DIR = BASE_DIR / "frontend"
+DATA_DIR = BASE_DIR / "data"
 PDF_DIR.mkdir(exist_ok=True, parents=True)
 OUT_DIR.mkdir(exist_ok=True, parents=True)
 STATIC_DIR.mkdir(exist_ok=True, parents=True)
 FRONTEND_DIR.mkdir(exist_ok=True, parents=True)
+DATA_DIR.mkdir(exist_ok=True, parents=True)
 
 INDEX_HTML = FRONTEND_DIR / "index.html"
+RECORDS_JSON_PATH = DATA_DIR / "records.json"
+RECORDS_CSV_PATH = DATA_DIR / "records.csv"
+CSV_COLUMNS = [
+    "Title",
+    "Venue",
+    "Publication year",
+    "Author list",
+    "Abstract",
+    "Representative figure",
+    "DOI",
+    "Video",
+]
+MAX_UPLOAD_BATCH = 20
+
+PERSISTED_RECORDS: List[Dict] = []
+RECORDS_LOCK = Lock()
 
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"<>]+\b")
 CROSSREF_API_BASE = "https://api.crossref.org/works"
+
+
+def _record_identifier(row: Dict, file_name: str) -> str:
+    doi = (row.get("DOI") or "").strip().lower()
+    if doi:
+        return f"doi:{doi}"
+    return f"file:{file_name.strip().lower()}"
+
+
+def _write_records_to_disk() -> None:
+    records_copy = list(PERSISTED_RECORDS)
+    RECORDS_JSON_PATH.write_text(
+        json.dumps(records_copy, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    rows_for_csv = [
+        {col: record.get(col, "") for col in CSV_COLUMNS}
+        for record in records_copy
+    ]
+    df = pd.DataFrame(rows_for_csv, columns=CSV_COLUMNS)
+    df.to_csv(RECORDS_CSV_PATH, index=False, encoding="utf-8-sig")
+
+
+def _load_records_from_disk() -> None:
+    if RECORDS_JSON_PATH.exists():
+        try:
+            data = json.loads(RECORDS_JSON_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                PERSISTED_RECORDS.clear()
+                PERSISTED_RECORDS.extend(data)
+        except json.JSONDecodeError:
+            PERSISTED_RECORDS.clear()
+    else:
+        PERSISTED_RECORDS.clear()
+    _write_records_to_disk()
+
+
+def persist_sheet_row(row: Dict, file_name: str, source_url: str = "") -> Dict:
+    entry = dict(row)
+    entry["file_name"] = file_name
+    entry["source_url"] = source_url
+    entry["saved_at"] = datetime.utcnow().isoformat() + "Z"
+    entry["id"] = _record_identifier(row, file_name)
+
+    with RECORDS_LOCK:
+        existing_idx = next(
+            (idx for idx, record in enumerate(PERSISTED_RECORDS) if record.get("id") == entry["id"]),
+            None,
+        )
+        if existing_idx is not None:
+            PERSISTED_RECORDS[existing_idx] = entry
+        else:
+            PERSISTED_RECORDS.append(entry)
+        _write_records_to_disk()
+    return entry
+
+
+def get_records_snapshot() -> List[Dict]:
+    with RECORDS_LOCK:
+        return list(PERSISTED_RECORDS)
+
+
+_load_records_from_disk()
 
 
 def extract_doi_from_pdf(pdf_path: Path, max_pages: int = 2) -> Optional[str]:
@@ -113,6 +196,12 @@ def normalize_metadata(message: Dict, file_name: str, doi_fallback: Optional[str
     return {"sheet_row": sheet_row, "full": full}
 
 
+def persist_result_bundle(result: Dict) -> Dict:
+    full = result["full"]
+    row = result["sheet_row"]
+    return persist_sheet_row(row, full.get("file_name", ""), full.get("source_url", ""))
+
+
 def process_single_pdf(pdf_path: Path) -> Dict:
     """Run DOI extraction + Crossref fetch for one PDF."""
 
@@ -132,6 +221,7 @@ def batch_process(pdf_dir: Path = PDF_DIR) -> List[Dict]:
         print(f"[INFO] Processing: {pdf.name}")
         try:
             info = process_single_pdf(pdf)
+            persist_result_bundle(info)
             results.append(info)
             print(f"       ✔ DOI={info['sheet_row']['DOI']}")
         except Exception as exc:
@@ -163,6 +253,27 @@ def save_outputs(results: List[Dict]):
     print(f"[INFO] CSV written to {csv_path}")
 
 
+async def handle_uploaded_pdf(upload: UploadFile) -> Dict:
+    pdf_path = PDF_DIR / upload.filename
+    with pdf_path.open("wb") as dest:
+        dest.write(await upload.read())
+
+    try:
+        result = process_single_pdf(pdf_path)
+        stored = persist_result_bundle(result)
+        return {
+            "status": "ok",
+            "file_name": upload.filename,
+            "data": stored,
+            "debug": {
+                "file_name": stored.get("file_name", upload.filename),
+                "source_url": stored.get("source_url", result["full"].get("source_url", "")),
+            },
+        }
+    except Exception as exc:
+        return {"status": "error", "file_name": upload.filename, "error": str(exc)}
+
+
 app = FastAPI(title="ACM Meta MVP")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -178,22 +289,47 @@ def read_index():
 async def upload(file: UploadFile = File(...)):
     """Upload single PDF and return metadata row."""
 
-    pdf_path = PDF_DIR / file.filename
-    with pdf_path.open("wb") as dest:
-        dest.write(await file.read())
+    result = await handle_uploaded_pdf(file)
+    status_code = 200 if result.get("status") == "ok" else 400
+    return JSONResponse(result, status_code=status_code)
 
-    try:
-        result = process_single_pdf(pdf_path)
-        return JSONResponse({
-            "status": "ok",
-            "data": result["sheet_row"],
-            "debug": {
-                "file_name": result["full"]["file_name"],
-                "source_url": result["full"].get("source_url", ""),
-            },
-        })
-    except Exception as exc:
-        return JSONResponse({"status": "error", "error": str(exc)}, status_code=400)
+
+@app.post("/api/upload/batch")
+async def upload_batch(files: List[UploadFile] = File(...)):
+    """Upload multiple PDFs (up to MAX_UPLOAD_BATCH) and persist their metadata."""
+
+    if not files:
+        return JSONResponse({"status": "error", "error": "No files provided"}, status_code=400)
+    if len(files) > MAX_UPLOAD_BATCH:
+        return JSONResponse(
+            {"status": "error", "error": f"Maximum {MAX_UPLOAD_BATCH} files per upload"},
+            status_code=400,
+        )
+
+    responses: List[Dict] = []
+    for upload_file in files:
+        responses.append(await handle_uploaded_pdf(upload_file))
+
+    success = any(item.get("status") == "ok" for item in responses)
+    overall_status = "ok" if success else "error"
+    return JSONResponse({"status": overall_status, "items": responses})
+
+
+@app.get("/api/records")
+def list_records():
+    """Return persisted metadata entries (newest first)."""
+
+    records = list(reversed(get_records_snapshot()))
+    return {"records": records}
+
+
+@app.get("/api/export")
+def export_records():
+    """Download the persisted metadata CSV."""
+
+    if not RECORDS_CSV_PATH.exists():
+        _write_records_to_disk()
+    return FileResponse(RECORDS_CSV_PATH, filename="metadata_records.csv")
 
 
 def main():

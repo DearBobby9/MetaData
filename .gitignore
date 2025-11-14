@@ -5,4 +5,6 @@ __pycache__/
 .DS_Store
 output/
 pdfs/
+data/*.json
+data/*.csv
 *.log

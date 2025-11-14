@@ -76,6 +76,8 @@ MetaData/
 ├─ requirements.txt
 ├─ main.py
 ├─ config.example.env
+├─ data/
+│  └─ .gitkeep              # 运行后会生成 records.json / records.csv，持久化所有 metadata
 ├─ frontend/
 │  └─ index.html
 ├─ static/
@@ -85,7 +87,7 @@ MetaData/
 └─ output/
 ```
 
-`frontend/index.html` + `static/` 组成了新的 Web UI：运行 `python main.py serve` 后，访问 `http://127.0.0.1:8000/` 即可拖拽上传 PDF、实时查看 metadata 卡片和 Spreadsheet 字段。
+`frontend/index.html` + `static/` 组成了新的 Web UI：运行 `python main.py serve` 后，访问 `http://127.0.0.1:8000/` 即可批量上传（一次最多 20 篇），实时查看 metadata 卡片，并在“Metadata 表格”页浏览/导出持久化数据。
 
 ### 3.4 依赖与配置
 
@@ -321,6 +323,13 @@ if __name__ == "__main__":
     main()
 ```
 
+#### 持久化 & 批量 API
+
+- `POST /api/upload/batch`：一次上传最多 20 个 `files`，返回每个文件的处理状态；成功的条目会写入 `data/records.json` & `data/records.csv`。
+- `GET /api/records`：返回当前已保存的所有 metadata 行，新数据按时间倒序排列，可用于前端表格或自定义脚本。
+- `GET /api/export`：直接下载 `data/records.csv`，列顺序与老师 Spreadsheet 完全一致。
+- `data/` 目录保存的 JSON/CSV 在刷新或重启后不会丢失，可作为长期语料库。若想清空，只需删除对应文件即可。
+
 ### 3.6 运行步骤
 
 1. **初始化环境**
@@ -343,12 +352,14 @@ if __name__ == "__main__":
    ```bash
    python main.py serve
    ```
-   - 打开浏览器访问 `http://127.0.0.1:8000/`，可见全新的前端页面（拖拽上传区 + Metadata 预览卡片 + Spreadsheet 字段网格）。
-   - 上传完成后，即时渲染 Title / Venue / Authors / Year / Abstract / DOI，并提供 DOI 快捷链接。
+   - 打开浏览器访问 `http://127.0.0.1:8000/`，可见两个视图：
+     - **上传 PDF**：拖拽或点击一次性选择 ≤20 个 PDF，实时查看最新成功条目的 Metadata 卡片；下方状态列表会逐个显示成功/失败情况。
+     - **Metadata 表格**：浏览所有历史记录（存储在 `data/records.json`），点击右上角即可导出 CSV。
    - 若需脚本化调用，可继续使用 `curl`：
      ```bash
-     curl -X POST http://127.0.0.1:8000/api/upload \
-       -F "file=@pdfs/sample.pdf"
+     curl -X POST http://127.0.0.1:8000/api/upload/batch \
+       -F "files=@pdfs/sample1.pdf" \
+       -F "files=@pdfs/sample2.pdf"
      ```
 
 4. **一键运行前后端**
