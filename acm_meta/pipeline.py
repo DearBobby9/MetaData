@@ -53,6 +53,9 @@ class MetadataPipeline:
 
     def process_local_pdf(self, pdf_path: Path) -> Tuple[PaperRecord, Dict[str, Any]]:
         record, full = self._process_pdf(pdf_path)
+        existing = self.store.find_by_doi(record.doi)
+        if existing:
+            record.id = existing.id
         self.store.upsert(record)
         logger.info("Persisted record %s", record.id)
         return record, full

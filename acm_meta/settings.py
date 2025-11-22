@@ -27,9 +27,7 @@ CSV_COLUMNS = [
     "Publication year",
     "Author list",
     "Abstract",
-    "Representative figure",
     "DOI",
-    "Video",
 ]
 
 MAX_UPLOAD_BATCH = 20

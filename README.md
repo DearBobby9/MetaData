@@ -1,12 +1,15 @@
 # acm-meta-mvp (v0.2.2)
 
-Metadata-first pipeline for ACM Digital Library PDFs. The project extracts spreadsheet-ready metadata (Title, Venue, Year, Authors, Abstract, DOI) so the teacher’s sheet can be filled with minimal manual work. Representative figures and video links remain placeholders for now.
+Metadata-first pipeline for ACM Digital Library PDFs. The project extracts spreadsheet-ready metadata (Title, Venue, Year, Authors, Abstract, DOI) so the teacher’s sheet can be filled with minimal manual work.
 
 ## Version 0.2.2 – Release Notes
 
 - Refactored the pipeline into reusable core modules (`acm_meta/`) so PDF parsing, Crossref calls, normalization, and persistence can be reused by both CLI and API layers.
 - Introduced typed models plus structured upload responses. Every API now returns consistent `status/error_code/message` payloads, and the frontend consumes a single `record` shape.
 - Hardened persistence with atomic JSON/CSV/XLSX writes and process-level file locks. DELETE/reorder now operate purely on stable record IDs.
+- Added inline editing + validation on the Metadata Table (double-click cells to edit, changes persist through the new `PATCH /api/records/{id}` endpoint).
+- Built-in DOI dedupe: uploading the same paper again replaces the existing row instead of creating duplicates, even if the PDF name differs.
+- Simplified the schema to the six core spreadsheet columns (Title, Venue, Year, Authors, Abstract, DOI) so the table matches the teacher’s requirements exactly.
 - Known issue: the Atlas browser sometimes swallows the confirm dialog so Delete appears unresponsive—Chrome behaves correctly, so use Chrome if you need to delete rows until Atlas addresses the dialog bug.
 
 ## TL;DR (Quick Start)
@@ -32,9 +35,7 @@ Uploading `XR-Objects.pdf` produces the following table row (also persisted to `
   "Publication year": 2024,
   "Author list": "Mustafa Doga Dogan, Eric J Gonzalez, Karan Ahuja, Ruofei Du, Andrea Colaço, Johnny Lee, Mar Gonzalez-Franco, David Kim",
   "Abstract": "Seamless integration of physical objects as interactive digital entities remains a challenge for spatial computing...",
-  "Representative figure": "N/A",
   "DOI": "10.1145/3654777.3676379",
-  "Video": "N/A"
 }
 ```
 ## Version 0.2 – Release Notes
@@ -58,13 +59,11 @@ Each paper occupies one spreadsheet row. Column definitions stay fixed:
 | Publication year | Year of publication | Four-digit integer (e.g., `2022`) |
 | Author list | Authors in `Given Family` format | Join with `, `; do not include `and` or periods |
 | Abstract | Paper abstract | Plain English paragraph with the `ABSTRACT` label removed |
-| Representative figure | Hero image placeholder | Currently always `N/A` in the MVP; later versions may insert a filename |
 | DOI | Digital Object Identifier | e.g., `10.1145/3491102.3502071` |
-| Video | Public video URL | Only YouTube/Vimeo accepted; fallback to `N/A` |
 
 ### 1.2 Core Metadata Fields
 
-The MVP automates Title, Venue, Publication year, Author list, Abstract, and DOI. Representative figure and Video are manual placeholders that will be handled in later releases.
+The MVP automates Title, Venue, Publication year, Author list, Abstract, and DOI.
 
 ---
 
@@ -76,17 +75,17 @@ The MVP automates Title, Venue, Publication year, Author list, Abstract, and DOI
 - Extract DOI from the first pages, query Crossref `/works/{doi}`, and normalize fields.
 - Produce two outputs:
   - `output/metadata.json`: verbose record for downstream automation.
-  - `output/metadata_for_spreadsheet.csv`: column order matches the teacher’s sheet with `N/A` placeholders.
+  - `output/metadata_for_spreadsheet.csv`: column order matches the teacher’s sheet exactly.
 
 ### 2.2 V1 (next)
 
-- CLI or UI helpers for manually attaching representative figures and video links.
-- Scripts that export all images contained in a PDF.
+- CLI or UI helpers for attaching optional hero images / demo links.
+- Scripts that export useful figures from PDFs.
 
 ### 2.3 V2+ (long-term)
 
-- Automatically discover official video links or recommend candidates.
-- Rank images to help select a teaser.
+- Automatically discover high-quality teaser images / videos and recommend candidates.
+- Rank media to help select a teaser.
 - Generate “making of” prompts, XR browsing experiences, and other exploratory features.
 
 ---
@@ -165,7 +164,7 @@ Copy to `.env` and replace the email with a real inbox for Crossref’s User-Age
    - Abstract: prefer Crossref, otherwise extract from the PDF’s “Abstract” paragraph via PyMuPDF.
    - DOI: returned DOI or the PDF fallback.
 4. **Outputs:**
-   - `metadata_for_spreadsheet.csv`: eight columns with figure/video at `N/A`.
+   - `metadata_for_spreadsheet.csv`: six columns (Title, Venue, Year, Authors, Abstract, DOI).
 5. **API modes:** `/api/upload` handles a single file, `POST /api/upload/batch` processes multiple PDFs, and `python main.py batch` runs over everything inside `pdfs/`.
 
 ### 3.6 Persistence & Batch API
@@ -173,6 +172,7 @@ Copy to `.env` and replace the email with a real inbox for Crossref’s User-Age
 - `POST /api/upload/batch`: accepts up to 20 `files`, returns status per file, and saves successes to `data/records.json` and `data/records.csv`. Missing abstracts are auto extracted from the PDF.
 - `GET /api/records`: returns all stored records (most recent first); the frontend uses this for the metadata table.
 - `DELETE /api/records/{id}`: deletes a record (triggered by the table’s Delete button).
+- `PATCH /api/records/{id}`: updates editable columns (Title/Venue/Year/Authors/Abstract/DOI/etc.) from the inline editor.
 - `POST /api/records/reorder`: persists drag-and-drop ordering from the UI.
 - `GET /api/export`: downloads `data/records.csv`.
 - `GET /api/export/json`: downloads the JSON dataset.
@@ -196,7 +196,7 @@ Copy to `.env` and replace the email with a real inbox for Crossref’s User-Age
    python main.py batch
    ```
 
-   Outputs land in `output/metadata.json` and `output/metadata_for_spreadsheet.csv` with the teacher’s column order, using `N/A` for figure/video.
+   Outputs land in `output/metadata.json` and `output/metadata_for_spreadsheet.csv` with the teacher’s column order.
 
 3. **Web UI**
 
@@ -223,8 +223,8 @@ Copy to `.env` and replace the email with a real inbox for Crossref’s User-Age
 - ✅ Automatic metadata: DOI detection + Crossref + CSV/JSON/Excel export.
 - ✅ Persistent metadata table with drag/drop, delete, column/row resize, font slider, and multi-format export.
 - ✅ Documentation and UI strings fully in English.
-- ⏳ Upcoming (V1): representative figure picker, video link helper, image export script.
-- 🔭 Future (V2+): automated video discovery, teaser recommendations, AI-powered tooling.
+- ⏳ Upcoming (V1): asset picker (hero image, demo link) and media export helpers.
+- 🔭 Future (V2+): automated teaser/media discovery plus AI-powered tooling.
 
 ---
 

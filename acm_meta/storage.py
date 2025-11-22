@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 try:
     import fcntl  # type: ignore[attr-defined]
@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - Windows fallback
 
 import pandas as pd
 
-from .models import PaperRecord, rows_from_records
+from .models import EDITABLE_COLUMNS, PaperRecord, rows_from_records
 from .settings import (
     CSV_COLUMNS,
     RECORDS_CSV_PATH,
@@ -68,6 +68,9 @@ class RecordStore:
         self._file_lock = _FileLock(RECORDS_LOCK_PATH)
         self._load()
 
+    def _normalize_doi(self, doi: str) -> str:
+        return (doi or "").strip().lower()
+
     def _load(self) -> None:
         if RECORDS_JSON_PATH.exists():
             try:
@@ -119,6 +122,23 @@ class RecordStore:
             self._persist_files()
             return record
 
+    def get_by_id(self, record_id: str) -> Optional[PaperRecord]:
+        with self._lock:
+            for record in self._records:
+                if record.id == record_id:
+                    return record
+        return None
+
+    def find_by_doi(self, doi: str) -> Optional[PaperRecord]:
+        normalized = self._normalize_doi(doi)
+        if not normalized:
+            return None
+        with self._lock:
+            for record in self._records:
+                if self._normalize_doi(record.doi) == normalized:
+                    return record
+        return None
+
     def delete(self, record_id: str) -> bool:
         with self._lock:
             for idx, record in enumerate(self._records):
@@ -156,3 +176,20 @@ class RecordStore:
     def flush(self) -> None:
         with self._lock:
             self._persist_files()
+
+    def update_fields(self, record_id: str, updates: Dict[str, object]) -> Dict:
+        if not updates:
+            raise ValueError("No updates provided")
+        for field in updates:
+            if field not in EDITABLE_COLUMNS:
+                raise ValueError(f"Field {field} not editable")
+        with self._lock:
+            for idx, record in enumerate(self._records):
+                if record.id == record_id:
+                    legacy = record.to_legacy_dict()
+                    legacy.update(updates)
+                    updated = PaperRecord.from_legacy_dict(legacy)
+                    self._records[idx] = updated
+                    self._persist_files()
+                    return updated.to_legacy_dict()
+        raise KeyError(f"Record {record_id} not found")

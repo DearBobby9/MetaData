@@ -1,11 +1,17 @@
 import argparse
 import logging
 
+from typing import Optional, Union
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+try:
+    from pydantic import BaseModel, Field, ConfigDict
+except ImportError:  # pragma: no cover - pydantic v1 fallback
+    from pydantic import BaseModel, Field  # type: ignore[misc]
+    ConfigDict = None  # type: ignore[assignment]
 
 from acm_meta.crossref_client import CrossrefClient
 from acm_meta.errors import MetaError, MetaErrorCode
@@ -36,12 +42,34 @@ class ReorderPayload(BaseModel):
     order: list[str]
 
 
+class RecordPatchPayload(BaseModel):
+    title: Optional[str] = Field(None, alias="Title")
+    venue: Optional[str] = Field(None, alias="Venue")
+    publication_year: Optional[Union[int, str]] = Field(None, alias="Publication year")
+    author_list: Optional[str] = Field(None, alias="Author list")
+    abstract: Optional[str] = Field(None, alias="Abstract")
+    doi: Optional[str] = Field(None, alias="DOI")
+
+    if ConfigDict is not None:
+        model_config = ConfigDict(populate_by_name=True)  # type: ignore[misc]
+    else:  # pragma: no cover - pydantic v1 fallback
+        class Config:
+            allow_population_by_field_name = True
+
+
 store = RecordStore()
 crossref_client = CrossrefClient()
 pipeline = MetadataPipeline(store, crossref_client)
 
 app = FastAPI(title="ACM Meta MVP")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+def dump_by_alias(model: BaseModel, *, exclude_unset: bool = True) -> dict:
+    try:
+        return model.model_dump(by_alias=True, exclude_unset=exclude_unset)
+    except AttributeError:  # pragma: no cover - Pydantic v1 fallback
+        return model.dict(by_alias=True, exclude_unset=exclude_unset)
 
 
 async def process_upload_file(file: UploadFile) -> UploadResponseItem:
@@ -108,6 +136,20 @@ def reorder_records(payload: ReorderPayload):
         raise HTTPException(status_code=400, detail="Order list required")
     store.reorder(payload.order)
     return {"status": "ok"}
+
+
+@app.patch("/api/records/{record_id:path}")
+def patch_record(record_id: str, payload: RecordPatchPayload):
+    updates = dump_by_alias(payload)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields provided")
+    try:
+        record = store.update_fields(record_id, updates)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"status": "ok", "record": record}
 
 
 @app.get("/api/export")

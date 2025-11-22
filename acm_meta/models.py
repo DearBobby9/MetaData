@@ -28,9 +28,7 @@ class PaperRecord(BaseModel):
     publication_year: Optional[int] = Field(None, alias="Publication year")
     author_list: str = Field("", alias="Author list")
     abstract: str = Field("", alias="Abstract")
-    representative_figure: str = Field("N/A", alias="Representative figure")
     doi: str = Field("", alias="DOI")
-    video: str = Field("N/A", alias="Video")
     file_name: str
     source_url: str = ""
     saved_at: datetime
@@ -50,9 +48,7 @@ class PaperRecord(BaseModel):
             "Publication year": self.publication_year or "",
             "Author list": self.author_list,
             "Abstract": self.abstract,
-            "Representative figure": self.representative_figure,
             "DOI": self.doi,
-            "Video": self.video,
             "file_name": self.file_name,
             "source_url": self.source_url,
             "saved_at": self.saved_at.replace(microsecond=0).isoformat() + "Z",
@@ -87,9 +83,7 @@ class PaperRecord(BaseModel):
             publication_year=publication_year,
             author_list=data.get("Author list", ""),
             abstract=data.get("Abstract", ""),
-            representative_figure=data.get("Representative figure", "N/A"),
             doi=data.get("DOI", ""),
-            video=data.get("Video", "N/A"),
             file_name=data.get("file_name", data.get("Title", "")),
             source_url=data.get("source_url", ""),
             saved_at=saved_at,
@@ -122,3 +116,13 @@ def rows_from_records(records: list[PaperRecord]) -> list[Dict[str, Any]]:
     """Return sheet rows for CSV/JSON export."""
 
     return [{column: record.to_legacy_dict().get(column, "") for column in CSV_COLUMNS} for record in records]
+
+
+EDITABLE_COLUMNS = [
+    "Title",
+    "Venue",
+    "Publication year",
+    "Author list",
+    "Abstract",
+    "DOI",
+]

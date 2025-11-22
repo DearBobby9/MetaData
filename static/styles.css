@@ -500,6 +500,25 @@ tbody tr:hover {
   cursor: pointer;
 }
 
+td.editing {
+  padding: 0.4rem;
+}
+
+.cell-editor {
+  width: 100%;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+  resize: vertical;
+}
+
+textarea.cell-editor {
+  min-height: 120px;
+}
+
 .col-resizer {
   position: absolute;
   top: 0;

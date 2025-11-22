@@ -24,8 +24,6 @@ const FIELD_ORDER = [
   { key: 'Publication year', label: 'Year', icon: '🗓️' },
   { key: 'Abstract', label: 'Abstract', icon: '📝' },
   { key: 'DOI', label: 'DOI', icon: '🔗' },
-  { key: 'Representative figure', label: 'Representative figure', icon: '🖼️' },
-  { key: 'Video', label: 'Video', icon: '🎞️' },
 ];
 
 const DATA_COLUMNS = [
@@ -34,10 +32,11 @@ const DATA_COLUMNS = [
   { key: 'Publication year', label: 'Year', className: 'year-col' },
   { key: 'Author list', label: 'Authors', className: 'authors-col' },
   { key: 'Abstract', label: 'Abstract', className: 'abstract-col' },
-  { key: 'Representative figure', label: 'Representative figure' },
   { key: 'DOI', label: 'DOI', className: 'doi-col' },
-  { key: 'Video', label: 'Video' },
 ];
+
+const EDITABLE_COLUMNS = new Set(DATA_COLUMNS.map((column) => column.key));
+const MULTILINE_COLUMNS = new Set(['Abstract', 'Author list']);
 
 const DEFAULT_STATUS = 'Waiting for PDFs…';
 const MAX_FILES = 20;
@@ -77,9 +76,7 @@ const columnWidths = {
   'Publication year': '100px',
   'Author list': '240px',
   Abstract: '420px',
-  'Representative figure': '160px',
   DOI: '150px',
-  Video: '140px',
 };
 const rowHeights = {};
 const columnMinWidths = {
@@ -88,9 +85,7 @@ const columnMinWidths = {
   'Publication year': 80,
   'Author list': 200,
   Abstract: 280,
-  'Representative figure': 140,
   DOI: 120,
-  Video: 120,
 };
 const MIN_COLUMN_WIDTH = 120;
 const MIN_ROW_HEIGHT = 48;
@@ -99,6 +94,7 @@ const COLUMN_HANDLE_WIDTH = 18;
 const tableWrapper = document.querySelector('.table-wrapper');
 let isRowResizing = false;
 let rowResizeHover = null;
+let activeEditor = null;
 
 function setStatus(state, message, code = '') {
   statusMessage.textContent = message;
@@ -388,6 +384,16 @@ recordsBody.addEventListener('click', async (event) => {
   await deleteRecord(recordId);
 });
 
+recordsBody.addEventListener('dblclick', (event) => {
+  const cell = event.target.closest('td[data-column-key]');
+  if (!cell) return;
+  const columnKey = cell.dataset.columnKey;
+  if (!EDITABLE_COLUMNS.has(columnKey)) return;
+  const row = cell.closest('tr[data-id]');
+  if (!row) return;
+  startInlineEdit(row.dataset.id, columnKey, cell);
+});
+
 function isInRowResizeZone(row, clientY) {
   const rect = row.getBoundingClientRect();
   return rect.bottom - clientY <= ROW_RESIZE_HANDLE;
@@ -627,6 +633,122 @@ async function deleteRecord(recordId) {
     alert(describeError(error));
     setStatus('error', describeError(error), getErrorCode(error));
   }
+}
+
+function getRecordById(recordId) {
+  return currentRecords.find((record) => record.id === recordId);
+}
+
+function replaceRecord(updated) {
+  const index = currentRecords.findIndex((record) => record.id === updated.id);
+  if (index >= 0) {
+    currentRecords[index] = updated;
+  } else {
+    currentRecords.push(updated);
+  }
+  renderRecordsTable();
+}
+
+function cleanupInlineEditor() {
+  if (!activeEditor) return;
+  const { cell, originalContent } = activeEditor;
+  cell.classList.remove('editing');
+  cell.innerHTML = originalContent;
+  activeEditor = null;
+}
+
+async function submitInlineEdit() {
+  if (!activeEditor) return;
+  const { recordId, columnKey, input, originalValue } = activeEditor;
+  const rawValue = MULTILINE_COLUMNS.has(columnKey) ? input.value : input.value.trim();
+  const normalizedOriginal = MULTILINE_COLUMNS.has(columnKey) ? originalValue || '' : (originalValue || '').trim();
+  if (!rawValue && !normalizedOriginal) {
+    cleanupInlineEditor();
+    return;
+  }
+  if (rawValue === normalizedOriginal) {
+    cleanupInlineEditor();
+    return;
+  }
+
+  let payloadValue = rawValue;
+  if (columnKey === 'Publication year') {
+    if (!rawValue) {
+      payloadValue = '';
+    } else if (!/^\d{4}$/.test(rawValue)) {
+      alert('Year must be a 4-digit number.');
+      input.focus();
+      return;
+    } else {
+      payloadValue = Number(rawValue);
+    }
+  }
+
+  try {
+    setStatus('pending', 'Saving changes…');
+    const response = await api(`/api/records/${encodeURIComponent(recordId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [columnKey]: payloadValue }),
+    });
+    if (response && response.record) {
+      replaceRecord(response.record);
+      setStatus('success', 'Record updated.');
+    } else {
+      setStatus('warning', 'Saved, but response was unexpected.');
+    }
+  } catch (error) {
+    console.error('Failed to update record', error);
+    alert(describeError(error));
+    setStatus('error', describeError(error), getErrorCode(error));
+  } finally {
+    cleanupInlineEditor();
+  }
+}
+
+function startInlineEdit(recordId, columnKey, cell) {
+  if (isRowResizing) return;
+  const record = getRecordById(recordId);
+  if (!record) return;
+
+  cleanupInlineEditor();
+
+  const originalValue = record[columnKey] || '';
+  const displayValue = originalValue === 'N/A' ? '' : originalValue;
+  const input = MULTILINE_COLUMNS.has(columnKey)
+    ? document.createElement('textarea')
+    : document.createElement('input');
+  input.className = 'cell-editor';
+  input.value = displayValue;
+  input.placeholder = originalValue === 'N/A' ? 'N/A' : '';
+  if (!MULTILINE_COLUMNS.has(columnKey)) {
+    input.type = columnKey === 'Publication year' ? 'number' : 'text';
+  }
+
+  const originalContent = cell.innerHTML;
+  cell.classList.add('editing');
+  cell.innerHTML = '';
+  cell.appendChild(input);
+  input.focus();
+  input.select();
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cleanupInlineEditor();
+    } else if (event.key === 'Enter' && (!MULTILINE_COLUMNS.has(columnKey) || event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      submitInlineEdit();
+    }
+  });
+
+  input.addEventListener('blur', () => {
+    if (!document.activeElement || document.activeElement !== input) {
+      submitInlineEdit();
+    }
+  });
+
+  activeEditor = { recordId, columnKey, cell, input, originalValue, originalContent };
 }
 
 function setTableFontSize(value) {
