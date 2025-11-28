@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -31,3 +32,10 @@ CSV_COLUMNS = [
 ]
 
 MAX_UPLOAD_BATCH = 20
+MAX_UPLOAD_SIZE_MB = int(os.getenv("ACM_META_MAX_UPLOAD_MB", "25"))
+MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
+UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1MB chunks keep memory usage low during uploads
+ALLOWED_UPLOAD_CONTENT_TYPES = {
+    "application/pdf",
+    "application/octet-stream",
+}

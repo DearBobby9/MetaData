@@ -10,6 +10,14 @@ from typing import List
 import fitz
 from pypdf import PdfReader
 
+try:  # pypdf < 3 does not expose PdfReadError centrally
+    from pypdf.errors import PdfReadError  # type: ignore
+except Exception:  # pragma: no cover - fallback for older versions
+    class PdfReadError(Exception):
+        """Raised when a PDF cannot be parsed."""
+
+from .errors import MetaError, MetaErrorCode
+
 
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"<>]+\b")
 logger = logging.getLogger(__name__)
@@ -20,7 +28,10 @@ def _normalize_text(text: str) -> str:
 
 
 def extract_doi_candidates(pdf_path: Path, max_pages: int = 2) -> List[str]:
-    reader = PdfReader(str(pdf_path))
+    try:
+        reader = PdfReader(str(pdf_path))
+    except (PdfReadError, OSError, ValueError) as exc:
+        raise MetaError(MetaErrorCode.PDF_PARSE_FAILED, f"Failed to read {pdf_path.name}: {exc}") from exc
     text = ""
     for page in reader.pages[:max_pages]:
         text += page.extract_text() or ""

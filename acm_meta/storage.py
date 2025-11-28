@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
+import shutil
 import threading
+from contextlib import suppress
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -24,10 +27,22 @@ from .settings import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_bytes(data)
     tmp_path.replace(path)
+
+
+def _backup_file(path: Path, suffix: str = ".bak") -> None:
+    if path.exists():
+        backup_path = path.with_name(path.name + suffix)
+        try:
+            shutil.copy2(path, backup_path)
+        except OSError:
+            logger.warning("Failed to create backup for %s", path)
 
 
 class _FileLock:
@@ -72,27 +87,32 @@ class RecordStore:
         return (doi or "").strip().lower()
 
     def _load(self) -> None:
+        raw_data: List[Dict] = []
+        corrupt_detected = False
         if RECORDS_JSON_PATH.exists():
             try:
-                raw_data = json.loads(RECORDS_JSON_PATH.read_text(encoding="utf-8"))
-                if not isinstance(raw_data, list):
-                    raw_data = []
+                parsed = json.loads(RECORDS_JSON_PATH.read_text(encoding="utf-8"))
+                if isinstance(parsed, list):
+                    raw_data = parsed
             except json.JSONDecodeError:
-                raw_data = []
-        else:
-            raw_data = []
-
+                corrupt_detected = True
+                logger.warning("records.json is corrupted; preserving copy for manual recovery")
+                corrupt_path = RECORDS_JSON_PATH.with_name(RECORDS_JSON_PATH.name + ".corrupt")
+                with suppress(OSError):
+                    RECORDS_JSON_PATH.replace(corrupt_path)
         records: List[PaperRecord] = []
         for item in raw_data:
             if isinstance(item, dict):
                 records.append(PaperRecord.from_legacy_dict(item))
 
         self._records = records
-        self._persist_files()
+        if not corrupt_detected:
+            self._persist_files()
 
     def _persist_files(self) -> None:
         rows = [record.to_legacy_dict() for record in self._records]
         with self._file_lock:
+            _backup_file(RECORDS_JSON_PATH)
             _atomic_write_bytes(
                 RECORDS_JSON_PATH,
                 json.dumps(rows, ensure_ascii=False, indent=2).encode("utf-8"),
@@ -101,6 +121,7 @@ class RecordStore:
             df = pd.DataFrame(export_rows, columns=CSV_COLUMNS)
             tmp_csv = RECORDS_CSV_PATH.with_suffix(".csv.tmp")
             df.to_csv(tmp_csv, index=False, encoding="utf-8-sig")
+            _backup_file(RECORDS_CSV_PATH)
             tmp_csv.replace(RECORDS_CSV_PATH)
 
     def snapshot(self) -> List[Dict]:

@@ -46,6 +46,8 @@ const ERROR_MESSAGES = {
   CROSSREF_RATE_LIMIT: 'Crossref rate limit reached. Wait a few seconds and try again.',
   CROSSREF_SERVER_ERROR: 'Crossref returned a temporary server error. Please retry shortly.',
   CROSSREF_REQUEST_FAILED: 'Could not reach Crossref. Check your connection and try again.',
+  INVALID_FILE_TYPE: 'Only PDF uploads are supported.',
+  FILE_TOO_LARGE: 'This PDF exceeds the upload size limit (25MB by default).',
   PDF_PARSE_FAILED: 'Failed to read the PDF well enough to extract the abstract.',
   UNKNOWN_ERROR: 'Unexpected error while processing this PDF.',
 };
@@ -593,7 +595,15 @@ async function handleSubmit(event) {
     await fetchRecords();
   } catch (error) {
     console.error('Upload failed', error);
-    setStatus('error', describeError(error), getErrorCode(error));
+    const payload = error?.payload;
+    if (payload?.results && Array.isArray(payload.results)) {
+      renderUploadLog(payload.results);
+      const message = payload.error || describeError(payload);
+      const code = payload.code || getErrorCode(payload);
+      setStatus('error', message || 'Upload failed', code);
+    } else {
+      setStatus('error', describeError(error), getErrorCode(error));
+    }
   }
 }
 
